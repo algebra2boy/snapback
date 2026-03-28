@@ -23,8 +23,8 @@ const PNL_DATA = REPAIR_PCTS.map((r) => {
 function Tooltip({ text }) {
   return (
     <div className="relative group inline-flex">
-      <Info className="size-3 text-muted-foreground/40 cursor-help" />
-      <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 rounded-lg bg-popover border border-border px-3 py-2 text-[11px] text-popover-foreground shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-50 leading-relaxed">
+      <Info className="size-3 text-muted-foreground/55 cursor-help" />
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-56 -translate-x-1/2 rounded-xl border border-border/80 bg-white/98 px-3 py-2 text-[11px] leading-relaxed text-popover-foreground opacity-0 shadow-[0_18px_48px_rgba(15,23,42,0.14)] transition-opacity group-hover:opacity-100">
         {text}
         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-border" />
       </div>
@@ -35,12 +35,12 @@ function Tooltip({ text }) {
 // ── Stat cell (used in the horizontal stats bar) ──────────────────────────────
 function StatCell({ label, value, valueCls, tooltip, border = true }) {
   return (
-    <div className={`px-6 py-4 ${border ? "border-r border-border" : ""}`}>
-      <div className="flex items-center gap-1.5 mb-1">
-        <p className="text-xs text-muted-foreground">{label}</p>
+    <div className={`px-5 py-4 md:px-6 ${border ? "border-r border-border/80" : ""}`}>
+      <div className="mb-1 flex items-center gap-1.5">
+        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
         {tooltip && <Tooltip text={tooltip} />}
       </div>
-      <p className={`text-[15px] font-semibold ${valueCls ?? ""}`}>{value ?? "—"}</p>
+      <p className={`text-[15px] font-semibold tracking-[-0.02em] ${valueCls ?? ""}`}>{value ?? "—"}</p>
     </div>
   );
 }
@@ -48,15 +48,15 @@ function StatCell({ label, value, valueCls, tooltip, border = true }) {
 // ── Freshness badge ───────────────────────────────────────────────────────────
 function FreshnessBadge({ dataAge, isSeed }) {
   if (isSeed) return (
-    <span className="text-xs text-red-500 font-medium">● Offline · seed data</span>
+    <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600">Offline · seed data</span>
   );
   if (!dataAge) return null;
   const seconds = Math.floor((Date.now() - dataAge) / 1000);
   if (seconds < 60) return (
-    <span className="text-xs text-emerald-500 font-medium">● Live · {seconds}s ago</span>
+    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">Live · {seconds}s ago</span>
   );
   return (
-    <span className="text-xs text-amber-500 font-medium">● Cached · {Math.floor(seconds / 60)}m ago</span>
+    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">Cached · {Math.floor(seconds / 60)}m ago</span>
   );
 }
 
@@ -100,9 +100,8 @@ export default function PolymarketRelativeValueTerminal() {
 
   // ── Init charts once ──
   useEffect(() => {
-    const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const grid   = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)";
-    const txt    = isDark ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.4)";
+    const grid = "rgba(148,163,184,0.18)";
+    const txt = "rgba(71,85,105,0.92)";
 
     strikeChart.current = new Chart(strikeChartRef.current, {
       type: "line",
@@ -140,10 +139,10 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: isDark ? "#1c1c1c" : "#fff",
-            titleColor: isDark ? "#fff" : "#111",
-            bodyColor: isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)",
-            borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+            backgroundColor: "#ffffff",
+            titleColor: "#111827",
+            bodyColor: "rgba(15,23,42,0.72)",
+            borderColor: "rgba(15,23,42,0.1)",
             borderWidth: 1,
             callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}¢` },
           },
@@ -196,10 +195,10 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: isDark ? "#1c1c1c" : "#fff",
-            titleColor: isDark ? "#fff" : "#111",
-            bodyColor: isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)",
-            borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+            backgroundColor: "#ffffff",
+            titleColor: "#111827",
+            bodyColor: "rgba(15,23,42,0.72)",
+            borderColor: "rgba(15,23,42,0.1)",
             borderWidth: 1,
           },
         },
@@ -260,131 +259,154 @@ export default function PolymarketRelativeValueTerminal() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background text-foreground">
 
       {/* ── Top nav bar ── */}
-      <header className="sticky top-0 z-20 bg-background border-b border-border flex items-center justify-between px-6 h-14 shrink-0">
-        <div className="flex items-center gap-8">
+      <header className="sticky top-0 z-20 border-b border-border/80 bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-[15px] tracking-tight">Snapback</span>
-            <span className="text-muted-foreground text-sm">/ No-arb Terminal</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-sm font-semibold text-white shadow-sm">
+              S
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[15px] font-semibold tracking-tight">Snapback</span>
+                <span className="text-sm text-muted-foreground">No-arb Terminal</span>
+              </div>
+              <p className="hidden text-xs text-muted-foreground md:block">
+                Scan structurally linked markets, inspect the violated surface, then price the corrective spread.
+              </p>
+            </div>
           </div>
-          {/* inline KPIs */}
-          <div className="hidden md:flex items-center gap-6 text-sm">
-            <span>
-              <span className="text-muted-foreground">Families </span>
-              <span className="font-medium">{loading ? "—" : scannerRows.length}</span>
-            </span>
-            <span>
-              <span className="text-muted-foreground">Dislocations </span>
-              <span className="font-medium">{loading ? "—" : dislocatedCount}</span>
-            </span>
-            <span>
-              <span className="text-muted-foreground">Actionable </span>
-              <span className={`font-semibold ${actionableCount > 0 ? "text-emerald-500" : ""}`}>
-                {loading ? "—" : actionableCount}
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-5 text-sm md:flex">
+              <span>
+                <span className="text-muted-foreground">Families </span>
+                <span className="font-medium">{loading ? "—" : scannerRows.length}</span>
               </span>
-            </span>
+              <span>
+                <span className="text-muted-foreground">Dislocations </span>
+                <span className="font-medium">{loading ? "—" : dislocatedCount}</span>
+              </span>
+              <span>
+                <span className="text-muted-foreground">Actionable </span>
+                <span className={`font-semibold ${actionableCount > 0 ? "text-emerald-600" : ""}`}>
+                  {loading ? "—" : actionableCount}
+                </span>
+              </span>
+            </div>
+            <FreshnessBadge dataAge={dataAge} isSeed={isSeed} />
+            {loading && <span className="text-xs text-muted-foreground animate-pulse">Fetching…</span>}
           </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <FreshnessBadge dataAge={dataAge} isSeed={isSeed} />
-          {loading && <span className="text-xs text-muted-foreground animate-pulse">Fetching…</span>}
         </div>
       </header>
 
       {/* ── Body: sidebar + main ── */}
-      <div className="flex flex-1 min-h-0">
+      <div className="mx-auto flex min-h-[calc(100vh-64px)] max-w-[1440px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:px-8 lg:py-6">
 
         {/* ── Scanner sidebar ── */}
-        <aside className="w-64 shrink-0 border-r border-border flex flex-col sticky top-14 h-[calc(100vh-56px)] overflow-y-auto">
-          <div className="px-4 py-3 border-b border-border">
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">
+        <aside className="glass-panel w-full shrink-0 overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100vh-112px)] lg:w-72">
+          <div className="border-b border-border/80 px-5 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Scanner
             </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Ranked by live raw dislocation from current Gamma event discovery.
+            </p>
           </div>
-          {scannerRows.map((row) => (
-            <button
-              key={row.family}
-              onClick={() => !row.isSeed && setHeroFamily(row)}
-              className={`w-full text-left px-4 py-3.5 border-b border-border/50 transition-colors hover:bg-muted/40 ${
-                heroFamily?.family === row.family ? "bg-muted/60 border-l-2 border-l-emerald-500" : ""
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium truncate leading-snug">{row.family}</span>
-                <span className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}>
-                  {row.severity}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 mt-1">
-                <span className="text-[11px] text-muted-foreground">{row.type}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                  row.status === "Actionable" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400" :
-                  row.status === "Watchlist"  ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400" :
-                  "bg-muted text-muted-foreground"
-                }`}>
-                  {row.status}
-                </span>
-              </div>
-            </button>
-          ))}
+          <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-202px)]">
+            {scannerRows.map((row) => (
+              <button
+                key={row.family}
+                onClick={() => !row.isSeed && setHeroFamily(row)}
+                className={`scanner-item w-full text-left px-4 py-3.5 ${
+                  heroFamily?.family === row.family ? "scanner-item-active" : ""
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium leading-snug text-slate-900">{row.family}</span>
+                  <span className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}>
+                    {row.severity}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600">
+                    {row.type}
+                  </span>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${
+                    row.status === "Actionable" ? "bg-emerald-100 text-emerald-700" :
+                    row.status === "Watchlist"  ? "bg-amber-100 text-amber-700" :
+                    "bg-slate-100 text-slate-500"
+                  }`}>
+                    {row.status}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
         </aside>
 
         {/* ── Main content ── */}
-        <main className="flex-1 min-w-0 overflow-y-auto">
+        <main className="min-w-0 flex-1 space-y-4">
 
           {/* ── Family header + chart ── */}
-          <section className="px-8 pt-7 pb-6 border-b border-border">
+          <section className="glass-panel overflow-hidden">
 
             {/* Title row */}
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h2 className="text-xl font-semibold leading-tight">
-                  {heroFamily?.family ?? "—"}
-                </h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {heroFamily?.dislocation?.constraintDesc ?? "Select a family from the scanner"}
-                </p>
-                {alertText && (
-                  <p className="text-sm text-red-500 dark:text-red-400 mt-2 flex items-start gap-1.5">
-                    <span className="shrink-0 mt-px">⚠</span>
-                    {alertText}
+            <div className="soft-grid border-b border-border/80 px-6 pb-6 pt-7 sm:px-8">
+              <div className="mb-6 flex flex-col items-start justify-between gap-6 lg:flex-row">
+                <div className="max-w-2xl">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Selected family
                   </p>
-                )}
+                  <h2 className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.04em] text-slate-950">
+                    {heroFamily?.family ?? "—"}
+                  </h2>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
+                    {heroFamily?.dislocation?.constraintDesc ?? "Select a family from the scanner"}
+                  </p>
+                  {alertText && (
+                    <p className="mt-4 flex items-start gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                      <span className="shrink-0 mt-px">⚠</span>
+                      {alertText}
+                    </p>
+                  )}
+                </div>
+                <div className="min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Current signal</p>
+                  <p className={`mt-2 text-4xl font-bold tracking-[-0.06em] tabular-nums ${heroFamily?.severityCls ?? ""}`}>
+                    {heroFamily?.severity ?? "—"}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">{heroFamily?.status ?? "—"}</p>
+                </div>
               </div>
-              <div className="text-right shrink-0 ml-8">
-                <p className={`text-4xl font-bold tabular-nums ${heroFamily?.severityCls ?? ""}`}>
-                  {heroFamily?.severity ?? "—"}
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">{heroFamily?.status ?? "—"}</p>
+
+              {/* Chart */}
+              <div className="relative h-72 overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/88 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.06)]">
+                <canvas ref={strikeChartRef} />
+              </div>
+
+              {/* Legend */}
+              <div className="mt-4 flex flex-wrap gap-5 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/30" />
+                  No-arb envelope
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-[#378ADD]" />
+                  Market price
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-[#FF5000]" />
+                  Violation
+                </span>
               </div>
             </div>
 
-            {/* Chart */}
-            <div className="relative h-72">
-              <canvas ref={strikeChartRef} />
-            </div>
-
-            {/* Legend */}
-            <div className="flex gap-5 mt-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/30" />
-                No-arb envelope
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-full bg-[#378ADD]" />
-                Market price
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-full bg-[#FF5000]" />
-                Violation
-              </span>
-            </div>
           </section>
 
           {/* ── Stats bar ── */}
-          <div className="grid grid-cols-4 border-b border-border">
+          <div className="glass-panel grid grid-cols-2 overflow-hidden md:grid-cols-4">
             <StatCell
               label="Markets in family"
               value={heroFamily ? String(heroFamily.markets.length) : "—"}
@@ -401,181 +423,188 @@ export default function PolymarketRelativeValueTerminal() {
           </div>
 
           {/* ── Spread builder ── */}
-          <section className="px-8 py-7 space-y-8">
+          <section className="glass-panel overflow-hidden">
+            <div className="border-b border-border/80 px-6 py-5 sm:px-8">
+              <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Spread builder
+                  </p>
+                  <h3 className="mt-2 text-base font-semibold text-slate-950">Corrective spread</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Direction is structurally implied. The UI stays explicit about what is live versus what is still proxy data.
+                  </p>
+                </div>
+                <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                  Auto-generated
+                </Badge>
+              </div>
+            </div>
 
-            <div className="flex items-center justify-between">
+            <div className="space-y-8 px-6 py-7 sm:px-8">
+              {/* ── Two legs ── */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* Leg A */}
+                <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Leg A · Buy YES
+                  </p>
+                  <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
+                    {heroFamily?.dislocation?.violatingPair
+                      ? getQuestion(heroFamily.dislocation.violatingPair[0]).slice(0, 50)
+                      : "BTC above $90k"}
+                  </p>
+                  <div className="space-y-2.5 text-sm">
+                    {[
+                      ["Token", heroFamily?.dislocation?.violatingPair
+                        ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}`
+                        : "YES @ $0.38"],
+                      ["Shares", "263"],
+                      ["Cost", "$99.94"],
+                      ["Max gain", "+$163.06"],
+                    ].map(([label, val]) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className={`font-medium ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}>{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Leg B */}
+                <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Leg B · Buy NO
+                  </p>
+                  <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
+                    {heroFamily?.dislocation?.violatingPair
+                      ? getQuestion(heroFamily.dislocation.violatingPair[1]).slice(0, 50)
+                      : "BTC above $100k"}
+                  </p>
+                  <div className="space-y-2.5 text-sm">
+                    {[
+                      ["Token", heroFamily?.dislocation?.violatingPair
+                        ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}`
+                        : "NO @ $0.58"],
+                      ["Shares", "172"],
+                      ["Cost", "$99.76"],
+                      ["Max gain", "+$72.24"],
+                    ].map(([label, val]) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className={`font-medium ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}>{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── P&L chart ── */}
               <div>
-                <h3 className="text-base font-semibold">Corrective spread</h3>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  Direction is structurally implied — no judgment call needed.
-                </p>
+                <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">P&amp;L vs. repair amount</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Illustrative until CLOB-backed spread economics replace the placeholder curve.</p>
+                  </div>
+                  <div className="flex gap-4 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-0.5 w-3 rounded bg-[#00C805]" />
+                      Net P&amp;L
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-0.5 w-3 rounded bg-[#FF5000]" />
+                      Break-even
+                    </span>
+                  </div>
+                </div>
+                <div className="relative h-44 rounded-[28px] border border-slate-200/80 bg-white/84 p-4 shadow-sm">
+                  <canvas ref={pnlChartRef} />
+                </div>
               </div>
-              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400 px-2.5 py-1 rounded-full">
-                Auto-generated
-              </span>
-            </div>
 
-            {/* ── Two legs ── */}
-            <div className="grid grid-cols-2 gap-px bg-border rounded-xl overflow-hidden">
-              {/* Leg A */}
-              <div className="bg-background p-5">
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-                  Leg A · Buy YES
-                </p>
-                <p className="text-base font-medium mb-4 leading-snug">
-                  {heroFamily?.dislocation?.violatingPair
-                    ? getQuestion(heroFamily.dislocation.violatingPair[0]).slice(0, 50)
-                    : "BTC above $90k"}
-                </p>
-                <div className="space-y-2.5 text-sm">
+              {/* ── Summary stats ── */}
+              <div>
+                <p className="mb-3 text-sm font-semibold text-slate-950">Summary</p>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {[
-                    ["Token", heroFamily?.dislocation?.violatingPair
-                      ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}`
-                      : "YES @ $0.38"],
-                    ["Shares", "263"],
-                    ["Cost", "$99.94"],
-                    ["Max gain", "+$163.06"],
-                  ].map(([label, val]) => (
-                    <div key={label} className="flex items-center justify-between">
-                      <span className="text-muted-foreground">{label}</span>
-                      <span className={`font-medium ${label === "Max gain" ? "text-emerald-600 dark:text-emerald-400" : ""}`}>{val}</span>
+                    {
+                      label: "Net cost",
+                      value: "$199.70",
+                      tooltip: "Total upfront spend across both legs. This is your maximum possible loss if both sides go to zero.",
+                    },
+                    {
+                      label: "All-in friction",
+                      value: "$4.82",
+                      valueCls: "text-amber-600",
+                      tooltip: "Estimated transaction costs — bid/ask spread and slippage on both legs combined. Subtracted from your gross P&L.",
+                    },
+                    {
+                      label: "Break-even repair",
+                      value: "1.2pp",
+                      tooltip: "The minimum amount the dislocation must close (in percentage points) for you to cover friction costs and not lose money.",
+                    },
+                    {
+                      label: "Edge after spread",
+                      value: "2.8pp",
+                      valueCls: "text-emerald-600",
+                      tooltip: "How much of the raw dislocation remains after subtracting friction. This is your net opportunity — the cushion above break-even.",
+                    },
+                  ].map(({ label, value, valueCls, tooltip }) => (
+                    <div key={label} className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm">
+                      <div className="mb-1 flex items-center gap-1.5">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+                        <Tooltip text={tooltip} />
+                      </div>
+                      <p className={`text-lg font-semibold tabular-nums tracking-[-0.03em] ${valueCls ?? "text-slate-950"}`}>{value}</p>
                     </div>
                   ))}
                 </div>
               </div>
-              {/* Leg B */}
-              <div className="bg-background p-5">
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-                  Leg B · Buy NO
-                </p>
-                <p className="text-base font-medium mb-4 leading-snug">
-                  {heroFamily?.dislocation?.violatingPair
-                    ? getQuestion(heroFamily.dislocation.violatingPair[1]).slice(0, 50)
-                    : "BTC above $100k"}
-                </p>
-                <div className="space-y-2.5 text-sm">
+
+              {/* ── Evidence ── */}
+              <div>
+                <div className="mb-3 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">Evidence · PIT leave-one-out</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Still a presentation placeholder until `/prices-history` powers the evidence layer.</p>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {[
-                    ["Token", heroFamily?.dislocation?.violatingPair
-                      ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}`
-                      : "NO @ $0.58"],
-                    ["Shares", "172"],
-                    ["Cost", "$99.76"],
-                    ["Max gain", "+$72.24"],
-                  ].map(([label, val]) => (
-                    <div key={label} className="flex items-center justify-between">
-                      <span className="text-muted-foreground">{label}</span>
-                      <span className={`font-medium ${label === "Max gain" ? "text-emerald-600 dark:text-emerald-400" : ""}`}>{val}</span>
+                    ["Episodes",        "8 (high confidence)", ""],
+                    ["LOO wins",        "6 / 8 (75%)",          ""],
+                    ["Median P&L",      "+$8.40 / $100",        "text-emerald-600"],
+                    ["25th percentile", "-$4.20 / $100",        "text-amber-600"],
+                    ["Worst loss",      "-$18.50 / $100",       "text-red-600"],
+                    ["Friction",        "Base (1.0×)",           ""],
+                  ].map(([label, value, cls]) => (
+                    <div key={label} className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm">
+                      <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+                      <p className={`font-medium ${cls || "text-slate-900"}`}>{value}</p>
                     </div>
                   ))}
                 </div>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Episode history requires CLOB /prices-history integration (Phase 2).
+                </p>
+              </div>
+
+              {/* ── Model risk ── */}
+              <Alert className="border-amber-200 bg-amber-50">
+                <AlertDescription className="text-sm leading-6 text-amber-800">
+                  Friction is a conservative proxy. Depth and σ normalization are not yet live-computed, so the UI keeps those areas framed as incomplete evidence rather than definitive analytics.
+                </AlertDescription>
+              </Alert>
+
+              {/* ── Actions ── */}
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button size="lg" className="bg-slate-950 px-8 font-semibold text-white hover:bg-slate-800">
+                  Build spread order
+                </Button>
+                <Button size="lg" variant="outline" className="border-slate-200 bg-white px-8 text-slate-900 hover:bg-slate-50">
+                  View replay
+                </Button>
               </div>
             </div>
-
-            {/* ── P&L chart ── */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-sm font-semibold">P&amp;L vs. repair amount</p>
-                <div className="flex gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-0.5 bg-[#00C805] inline-block rounded" />
-                    Net P&amp;L
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-0.5 bg-[#FF5000] inline-block rounded" />
-                    Break-even
-                  </span>
-                </div>
-              </div>
-              <div className="relative h-44">
-                <canvas ref={pnlChartRef} />
-              </div>
-            </div>
-
-            {/* ── Summary stats ── */}
-            <div>
-              <p className="text-sm font-semibold mb-3">Summary</p>
-              <div className="grid grid-cols-4 divide-x divide-border border border-border rounded-xl">
-                {[
-                  {
-                    label: "Net cost",
-                    value: "$199.70",
-                    tooltip: "Total upfront spend across both legs. This is your maximum possible loss if both sides go to zero.",
-                  },
-                  {
-                    label: "All-in friction",
-                    value: "$4.82",
-                    valueCls: "text-amber-500",
-                    tooltip: "Estimated transaction costs — bid/ask spread and slippage on both legs combined. Subtracted from your gross P&L.",
-                  },
-                  {
-                    label: "Break-even repair",
-                    value: "1.2pp",
-                    tooltip: "The minimum amount the dislocation must close (in percentage points) for you to cover friction costs and not lose money.",
-                  },
-                  {
-                    label: "Edge after spread",
-                    value: "2.8pp",
-                    valueCls: "text-emerald-500",
-                    tooltip: "How much of the raw dislocation remains after subtracting friction. This is your net opportunity — the cushion above break-even.",
-                  },
-                ].map(({ label, value, valueCls, tooltip }, i, arr) => (
-                  <div
-                    key={label}
-                    className={`px-5 py-4 bg-background ${
-                      i === 0 ? "rounded-l-xl" : i === arr.length - 1 ? "rounded-r-xl" : ""
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <p className="text-xs text-muted-foreground">{label}</p>
-                      <Tooltip text={tooltip} />
-                    </div>
-                    <p className={`text-lg font-semibold tabular-nums ${valueCls ?? ""}`}>{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* ── Evidence ── */}
-            <div>
-              <p className="text-sm font-semibold mb-3">Evidence · PIT leave-one-out</p>
-              <div className="grid grid-cols-3 gap-px bg-border rounded-xl overflow-hidden text-sm">
-                {[
-                  ["Episodes",        "8 (high confidence)", ""],
-                  ["LOO wins",        "6 / 8 (75%)",          ""],
-                  ["Median P&L",      "+$8.40 / $100",        "text-emerald-500"],
-                  ["25th percentile", "-$4.20 / $100",        "text-amber-500"],
-                  ["Worst loss",      "-$18.50 / $100",       "text-red-500"],
-                  ["Friction",        "Base (1.0×)",           ""],
-                ].map(([label, value, cls]) => (
-                  <div key={label} className="bg-background px-5 py-3.5">
-                    <p className="text-xs text-muted-foreground mb-1">{label}</p>
-                    <p className={`font-medium ${cls}`}>{value}</p>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[11px] text-muted-foreground mt-2">
-                Episode history requires CLOB /prices-history integration (Phase 2).
-              </p>
-            </div>
-
-            {/* ── Model risk ── */}
-            <Alert className="bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900/50">
-              <AlertDescription className="text-amber-800 dark:text-amber-300 text-sm">
-                Friction is a conservative proxy (current spreads, not historical). Depth and σ
-                normalization require CLOB integration. Small sample — past ≠ future.
-              </AlertDescription>
-            </Alert>
-
-            {/* ── Actions ── */}
-            <div className="flex gap-3">
-              <Button size="lg" className="bg-[#00C805] hover:bg-[#00b004] text-white font-semibold px-8">
-                Build spread order
-              </Button>
-              <Button size="lg" variant="outline" className="px-8">
-                View replay
-              </Button>
-            </div>
-
           </section>
         </main>
       </div>
