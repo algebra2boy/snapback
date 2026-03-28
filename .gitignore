@@ -2,3 +2,5 @@ node_modules
 dist
 AGENTS.md
 .DS_Store
+*.log
+*.env
