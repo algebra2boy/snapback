@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Chart from "chart.js/auto";
+import { Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,50 +20,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  fetchFamilies,
+  SEED_ROWS,
+  computeNoArbEnvelope,
+  getQuestion,
+} from "@/lib/gammaApi";
 
-const SCANNER_ROWS = [
-  {
-    family: "BTC price thresholds",
-    type: "Strike ladder",
-    typeCls: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
-    severity: "2.4σ",
-    severityCls: "text-emerald-600 dark:text-emerald-400",
-    constraint: "P($100k) ≤ P($90k) ≤ P($80k)",
-    status: "Actionable",
-    statusCls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  },
-  {
-    family: "Fed rate hold by month",
-    type: "Expiry curve",
-    typeCls: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-300",
-    severity: "1.8σ",
-    severityCls: "text-amber-600 dark:text-amber-400",
-    constraint: "P(by Jul) ≥ P(by Jun) ≥ P(by May)",
-    status: "Watchlist",
-    statusCls: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  },
-  {
-    family: "GOP primary winner",
-    type: "Mutex set",
-    typeCls: "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-300",
-    severity: "0.6σ",
-    severityCls: "text-muted-foreground",
-    constraint: "Σ outcomes ≈ 1.00 (current: 1.02)",
-    status: "Normal",
-    statusCls: "",
-  },
-  {
-    family: "ETH price thresholds",
-    type: "Strike ladder",
-    typeCls: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
-    severity: "0.3σ",
-    severityCls: "text-muted-foreground",
-    constraint: "P($5k) ≤ P($4k) ≤ P($3k)",
-    status: "Normal",
-    statusCls: "",
-  },
-];
-
+// ── P&L chart config (spread builder — still static until CLOB is wired in) ──
 const REPAIR_PCTS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
 const PNL_DATA = REPAIR_PCTS.map((r) => {
   const legA = 263 * (r / 100);
@@ -70,10 +35,23 @@ const PNL_DATA = REPAIR_PCTS.map((r) => {
   return Math.round((legA + legB - 4.82) * 100) / 100;
 });
 
-function MetricCard({ label, value, valueCls }) {
+// ── Small presentational components ──────────────────────────────────────────
+
+function MetricCard({ label, value, valueCls, tooltip }) {
   return (
     <div className="bg-muted/60 rounded-lg p-2.5">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <div className="flex items-center gap-1">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        {tooltip && (
+          <div className="relative group">
+            <Info className="size-3 text-muted-foreground/50 cursor-help shrink-0" />
+            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-48 rounded-md bg-popover border border-border px-2.5 py-1.5 text-[11px] text-popover-foreground shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50">
+              {tooltip}
+              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-border" />
+            </div>
+          </div>
+        )}
+      </div>
       <p className={`text-base font-medium mt-0.5 ${valueCls ?? ""}`}>{value}</p>
     </div>
   );
@@ -112,23 +90,93 @@ function DepthCard({ title, rows }) {
   );
 }
 
+// ── Freshness badge ───────────────────────────────────────────────────────────
+
+function FreshnessBadge({ dataAge, isSeed }) {
+  if (isSeed) {
+    return (
+      <Badge className="bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
+        Offline · seed data
+      </Badge>
+    );
+  }
+  if (!dataAge) return null;
+  const seconds = Math.floor((Date.now() - dataAge) / 1000);
+  if (seconds < 60) {
+    return (
+      <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+        Live · {seconds}s ago
+      </Badge>
+    );
+  }
+  const minutes = Math.floor(seconds / 60);
+  return (
+    <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+      Cached · {minutes}m ago
+    </Badge>
+  );
+}
+
+// ── Main terminal ─────────────────────────────────────────────────────────────
+
 export default function PolymarketRelativeValueTerminal() {
   const strikeChartRef = useRef(null);
-  const pnlChartRef = useRef(null);
+  const pnlChartRef    = useRef(null);
+  const strikeChart    = useRef(null); // Chart.js instance
+  const pnlChart       = useRef(null); // Chart.js instance
 
+  const [scannerRows, setScannerRows] = useState(SEED_ROWS);
+  const [loading, setLoading]         = useState(true);
+  const [isSeed, setIsSeed]           = useState(true);
+  const [dataAge, setDataAge]         = useState(null);
+  // Hero family: first strike-ladder row, used for Screen 2 + 3
+  const [heroFamily, setHeroFamily]   = useState(null);
+
+  // ── Fetch live families from Gamma API ──
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const rows = await fetchFamilies();
+        if (cancelled) return;
+
+        if (rows.length > 0) {
+          setScannerRows(rows);
+          setIsSeed(false);
+          setDataAge(Date.now());
+          // Pick the best strike-ladder family for the visualizer
+          const best =
+            rows.find(r => r.type === "Strike ladder" && r.rawDislocation > 0) ??
+            rows[0];
+          setHeroFamily(best);
+        }
+      } catch (err) {
+        // API down — seed data already shown, just log
+        console.warn("Gamma API unavailable, using seed data:", err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Initialise charts (once, on mount) ──
   useEffect(() => {
     const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const grid = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
-    const txt = isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)";
+    const grid   = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+    const txt    = isDark ? "rgba(255,255,255,0.6)"  : "rgba(0,0,0,0.5)";
 
-    const strikeChart = new Chart(strikeChartRef.current, {
+    strikeChart.current = new Chart(strikeChartRef.current, {
       type: "line",
       data: {
-        labels: ["$80k", "$90k", "$100k", "$110k", "$120k"],
+        labels: [],
         datasets: [
           {
             label: "No-arb upper bound",
-            data: [72, 55, 42, 28, 15],
+            data: [],
             borderColor: "rgba(31,158,117,0.3)",
             backgroundColor: "rgba(31,158,117,0.06)",
             fill: true,
@@ -139,15 +187,13 @@ export default function PolymarketRelativeValueTerminal() {
           },
           {
             label: "Market prices",
-            data: [68, 38, 42, 22, 11],
+            data: [],
             borderColor: "#378ADD",
             backgroundColor: "#378ADD",
             borderWidth: 2,
             pointRadius: 6,
-            pointBackgroundColor: (ctx) =>
-              ctx.dataIndex === 1 || ctx.dataIndex === 2 ? "#E24B4A" : "#378ADD",
-            pointBorderColor: (ctx) =>
-              ctx.dataIndex === 1 || ctx.dataIndex === 2 ? "#E24B4A" : "#378ADD",
+            pointBackgroundColor: [],
+            pointBorderColor: [],
             pointBorderWidth: 2,
             tension: 0,
           },
@@ -159,14 +205,13 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}¢` },
+            callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}¢` },
           },
         },
         scales: {
           y: {
             title: { display: true, text: "Probability (¢)", color: txt, font: { size: 12 } },
             min: 0,
-            max: 80,
             grid: { color: grid },
             ticks: { color: txt, font: { size: 11 }, callback: (v) => `${v}¢` },
           },
@@ -179,7 +224,7 @@ export default function PolymarketRelativeValueTerminal() {
       },
     });
 
-    const pnlChart = new Chart(pnlChartRef.current, {
+    pnlChart.current = new Chart(pnlChartRef.current, {
       type: "line",
       data: {
         labels: REPAIR_PCTS.map((r) => `${r}pp`),
@@ -230,10 +275,53 @@ export default function PolymarketRelativeValueTerminal() {
     });
 
     return () => {
-      strikeChart.destroy();
-      pnlChart.destroy();
+      strikeChart.current?.destroy();
+      pnlChart.current?.destroy();
     };
   }, []);
+
+  // ── Update strike chart whenever heroFamily changes ──
+  useEffect(() => {
+    if (!strikeChart.current || !heroFamily || !heroFamily.markets.length) return;
+
+    const prices  = heroFamily.markets.map(m => m.yesPrice * 100);
+    const envelope = computeNoArbEnvelope(prices);
+
+    // Red dot if the price is above the no-arb envelope at that index
+    const dotColors = prices.map((p, i) =>
+      p > envelope[i] ? "#E24B4A" : "#378ADD"
+    );
+
+    const chart = strikeChart.current;
+    chart.data.labels                              = heroFamily.labels;
+    chart.data.datasets[0].data                   = envelope;
+    chart.data.datasets[1].data                   = prices;
+    chart.data.datasets[1].pointBackgroundColor   = dotColors;
+    chart.data.datasets[1].pointBorderColor       = dotColors;
+    chart.update();
+  }, [heroFamily]);
+
+  // ── Derived KPI values ──
+  const actionableCount = scannerRows.filter(r => r.status === "Actionable").length;
+  const dislocatedCount = scannerRows.filter(r => r.rawDislocation > 0).length;
+
+  // ── Violation alert text for Screen 2 ──
+  function violationAlertText() {
+    if (!heroFamily || !heroFamily.dislocation) return null;
+    const { violatingPair, rawDislocation } = heroFamily.dislocation;
+    if (!violatingPair || rawDislocation <= 0) return null;
+    const [low, high] = violatingPair;
+    const pHigh = (high.yesPrice * 100).toFixed(1);
+    const pLow  = (low.yesPrice  * 100).toFixed(1);
+    const pp    = (rawDislocation * 100).toFixed(1);
+    const qHigh = getQuestion(high).slice(0, 50);
+    const qLow  = getQuestion(low).slice(0, 50);
+    return `Violation detected: ${qHigh} = ${pHigh}¢ but ${qLow} = ${pLow}¢. The higher-strike market is priced ${pp}pp above — this violates monotonicity.`;
+  }
+
+  const alertText = violationAlertText();
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="py-4 space-y-6">
@@ -244,10 +332,11 @@ export default function PolymarketRelativeValueTerminal() {
           <h1 className="text-[22px] font-medium">Polymarket relative value terminal</h1>
           <p className="text-sm text-muted-foreground mt-0.5">No-arb surface for prediction markets</p>
         </div>
-        <div className="flex gap-2">
-          <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-            Live
-          </Badge>
+        <div className="flex gap-2 items-center">
+          <FreshnessBadge dataAge={dataAge} isSeed={isSeed} />
+          {loading && (
+            <span className="text-xs text-muted-foreground animate-pulse">Fetching…</span>
+          )}
           <Badge variant="secondary">Replay available</Badge>
         </div>
       </div>
@@ -257,19 +346,25 @@ export default function PolymarketRelativeValueTerminal() {
         <Card size="sm">
           <CardContent>
             <p className="text-sm text-muted-foreground">Families scanned</p>
-            <p className="text-2xl font-medium mt-0.5">14</p>
+            <p className="text-2xl font-medium mt-0.5">
+              {loading ? "—" : scannerRows.length}
+            </p>
           </CardContent>
         </Card>
         <Card size="sm">
           <CardContent>
             <p className="text-sm text-muted-foreground">Dislocations found</p>
-            <p className="text-2xl font-medium mt-0.5">3</p>
+            <p className="text-2xl font-medium mt-0.5">
+              {loading ? "—" : dislocatedCount}
+            </p>
           </CardContent>
         </Card>
         <Card size="sm">
           <CardContent>
-            <p className="text-sm text-muted-foreground">Actionable (≥2σ)</p>
-            <p className="text-2xl font-medium mt-0.5 text-emerald-600 dark:text-emerald-400">1</p>
+            <p className="text-sm text-muted-foreground">Actionable (≥4pp)</p>
+            <p className={`text-2xl font-medium mt-0.5 ${actionableCount > 0 ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+              {loading ? "—" : actionableCount}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -283,14 +378,18 @@ export default function PolymarketRelativeValueTerminal() {
               <TableRow className="hover:bg-transparent">
                 <TableHead>Family</TableHead>
                 <TableHead>Type</TableHead>
-                <TableHead className="text-right">Severity</TableHead>
+                <TableHead className="text-right">Dislocation</TableHead>
                 <TableHead>Constraint</TableHead>
                 <TableHead className="text-right">Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {SCANNER_ROWS.map((row) => (
-                <TableRow key={row.family} className="cursor-pointer">
+              {scannerRows.map((row) => (
+                <TableRow
+                  key={row.family}
+                  className="cursor-pointer"
+                  onClick={() => !row.isSeed && setHeroFamily(row)}
+                >
                   <TableCell className="font-medium">{row.family}</TableCell>
                   <TableCell>
                     <Badge className={row.typeCls}>{row.type}</Badge>
@@ -298,7 +397,7 @@ export default function PolymarketRelativeValueTerminal() {
                   <TableCell className={`text-right font-medium ${row.severityCls}`}>
                     {row.severity}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{row.constraint}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{row.constraint}</TableCell>
                   <TableCell className="text-right">
                     <Badge
                       variant={row.statusCls ? undefined : "secondary"}
@@ -312,21 +411,33 @@ export default function PolymarketRelativeValueTerminal() {
             </TableBody>
           </Table>
         </Card>
+        {!isSeed && (
+          <p className="text-[11px] text-muted-foreground mt-1.5">
+            Severity shown as raw pp until CLOB price history is wired in for σ normalization. Click a row to visualize.
+          </p>
+        )}
       </section>
 
       {/* ── Screen 2 · Dislocation visualizer ── */}
       <section>
-        <p className="text-sm font-medium mb-2">Screen 2 · Dislocation visualizer — BTC strike ladder</p>
+        <p className="text-sm font-medium mb-2">
+          Screen 2 · Dislocation visualizer —{" "}
+          {heroFamily ? heroFamily.family : "loading…"}
+        </p>
         <Card>
           <CardHeader>
-            <CardTitle>BTC price threshold family</CardTitle>
-            <CardDescription>Constraint: probability must decrease as strike increases</CardDescription>
+            <CardTitle>{heroFamily ? heroFamily.family : "—"}</CardTitle>
+            <CardDescription>
+              {heroFamily?.dislocation?.constraintDesc
+                ? `Constraint: ${heroFamily.dislocation.constraintDesc}`
+                : "Constraint: probability must decrease as strike increases"}
+            </CardDescription>
             <CardAction>
               <div className="flex items-center gap-2">
                 <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-                  Exact
+                  {heroFamily?.type ?? "Strike ladder"}
                 </Badge>
-                <span className="text-xs text-muted-foreground">constraint confidence</span>
+                <span className="text-xs text-muted-foreground">family type</span>
               </div>
             </CardAction>
           </CardHeader>
@@ -350,19 +461,29 @@ export default function PolymarketRelativeValueTerminal() {
               </span>
             </div>
 
-            <Alert className="bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-900">
-              <AlertDescription className="text-red-800 dark:text-red-300">
-                Violation detected: P(&gt;$100k) = 42¢ but P(&gt;$90k) = 38¢. The $100k market is
-                priced 4pp above the $90k market — this violates monotonicity. Severity: 2.4σ from
-                trailing 30-day norm.
-              </AlertDescription>
-            </Alert>
+            {alertText ? (
+              <Alert className="bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-900">
+                <AlertDescription className="text-red-800 dark:text-red-300">
+                  {alertText}
+                </AlertDescription>
+              </Alert>
+            ) : heroFamily && heroFamily.rawDislocation === 0 ? (
+              <Alert className="bg-muted border-border">
+                <AlertDescription className="text-muted-foreground">
+                  No violation detected in this family. All prices satisfy the monotonicity constraint.
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
             <div className="grid grid-cols-4 gap-2">
-              <MetricCard label="Severity" value="2.4σ" valueCls="text-emerald-600 dark:text-emerald-400" />
-              <MetricCard label="Episodes (30d)" value="8" />
-              <MetricCard label="Closure rate" value="6/8 (75%)" />
-              <MetricCard label="Median closure" value="1.8d" />
+              <MetricCard
+                label="Dislocation"
+                value={heroFamily ? `${(heroFamily.rawDislocation * 100).toFixed(1)}pp` : "—"}
+                valueCls={heroFamily?.severityCls}
+              />
+              <MetricCard label="Markets in family" value={heroFamily ? heroFamily.markets.length : "—"} />
+              <MetricCard label="Status" value={heroFamily?.status ?? "—"} />
+              <MetricCard label="Type" value={heroFamily?.type ?? "—"} />
             </div>
           </CardContent>
         </Card>
@@ -382,17 +503,23 @@ export default function PolymarketRelativeValueTerminal() {
           </CardHeader>
           <CardContent className="space-y-5">
             <p className="text-sm text-muted-foreground">
-              Direction is structurally implied: P($100k) must fall or P($90k) must rise. Both legs
-              correct the violation.
+              Direction is structurally implied: the higher-strike market must fall or the lower-strike
+              market must rise. Both legs correct the violation.
             </p>
 
             {/* Legs */}
             <div className="grid grid-cols-2 gap-3">
               <LegCard
                 leg="Leg A · Buy YES"
-                title="BTC above $90k"
+                title={
+                  heroFamily?.dislocation?.violatingPair
+                    ? getQuestion(heroFamily.dislocation.violatingPair[0]).slice(0, 40)
+                    : "BTC above $90k"
+                }
                 rows={[
-                  ["Token", "YES @ $0.38"],
+                  ["Token", heroFamily?.dislocation?.violatingPair
+                    ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}`
+                    : "YES @ $0.38"],
                   ["Shares", "263"],
                   ["Cost", "$99.94"],
                   ["Max gain", "+$163.06", "text-emerald-600 dark:text-emerald-400"],
@@ -400,9 +527,15 @@ export default function PolymarketRelativeValueTerminal() {
               />
               <LegCard
                 leg="Leg B · Buy NO"
-                title="BTC above $100k"
+                title={
+                  heroFamily?.dislocation?.violatingPair
+                    ? getQuestion(heroFamily.dislocation.violatingPair[1]).slice(0, 40)
+                    : "BTC above $100k"
+                }
                 rows={[
-                  ["Token", "NO @ $0.58"],
+                  ["Token", heroFamily?.dislocation?.violatingPair
+                    ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}`
+                    : "NO @ $0.58"],
                   ["Shares", "172"],
                   ["Cost", "$99.76"],
                   ["Max gain", "+$72.24", "text-emerald-600 dark:text-emerald-400"],
@@ -415,26 +548,41 @@ export default function PolymarketRelativeValueTerminal() {
               <p className="text-sm font-medium mb-2">Market depth</p>
               <div className="grid grid-cols-2 gap-3">
                 <DepthCard
-                  title="BTC >$90k YES"
+                  title={heroFamily?.dislocation?.violatingPair
+                    ? getQuestion(heroFamily.dislocation.violatingPair[0]).slice(0, 30) + " YES"
+                    : "BTC >$90k YES"}
                   rows={[
-                    ["Best ask", "$0.39"],
+                    ["Best ask", heroFamily?.dislocation?.violatingPair
+                      ? `$${(heroFamily.dislocation.violatingPair[0].yesPrice + 0.01).toFixed(2)}`
+                      : "$0.39"],
                     ["Spread", "1.8%"],
                     ["Depth at ask", "$48k"],
-                    ["Est. fill (263 sh)", "$0.391"],
+                    ["Est. fill (263 sh)", heroFamily?.dislocation?.violatingPair
+                      ? `$${(heroFamily.dislocation.violatingPair[0].yesPrice + 0.001).toFixed(3)}`
+                      : "$0.391"],
                     ["Slippage", "0.3%", "text-amber-600 dark:text-amber-400"],
                   ]}
                 />
                 <DepthCard
-                  title="BTC >$100k NO"
+                  title={heroFamily?.dislocation?.violatingPair
+                    ? getQuestion(heroFamily.dislocation.violatingPair[1]).slice(0, 30) + " NO"
+                    : "BTC >$100k NO"}
                   rows={[
-                    ["Best ask", "$0.59"],
+                    ["Best ask", heroFamily?.dislocation?.violatingPair
+                      ? `$${(1 - heroFamily.dislocation.violatingPair[1].yesPrice + 0.01).toFixed(2)}`
+                      : "$0.59"],
                     ["Spread", "2.1%"],
                     ["Depth at ask", "$32k"],
-                    ["Est. fill (172 sh)", "$0.594"],
+                    ["Est. fill (172 sh)", heroFamily?.dislocation?.violatingPair
+                      ? `$${(1 - heroFamily.dislocation.violatingPair[1].yesPrice + 0.004).toFixed(3)}`
+                      : "$0.594"],
                     ["Slippage", "0.7%", "text-amber-600 dark:text-amber-400"],
                   ]}
                 />
               </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Depth and slippage estimates require CLOB /book integration (Phase 2).
+              </p>
             </div>
 
             {/* P&L chart */}
@@ -457,10 +605,28 @@ export default function PolymarketRelativeValueTerminal() {
 
             {/* Summary metrics */}
             <div className="grid grid-cols-4 gap-2">
-              <MetricCard label="Net cost" value="$199.70" />
-              <MetricCard label="All-in friction" value="$4.82" valueCls="text-amber-600 dark:text-amber-400" />
-              <MetricCard label="Break-even repair" value="1.2pp" />
-              <MetricCard label="Edge after spread" value="2.8pp" valueCls="text-emerald-600 dark:text-emerald-400" />
+              <MetricCard
+                label="Net cost"
+                value="$199.70"
+                tooltip="Total upfront spend across both legs. This is your maximum possible loss if both sides go to zero."
+              />
+              <MetricCard
+                label="All-in friction"
+                value="$4.82"
+                valueCls="text-amber-600 dark:text-amber-400"
+                tooltip="Estimated transaction costs — bid/ask spread and slippage on both legs combined. Subtracted from your gross P&L."
+              />
+              <MetricCard
+                label="Break-even repair"
+                value="1.2pp"
+                tooltip="The minimum amount the dislocation must close (in percentage points) for you to cover friction costs and not lose money."
+              />
+              <MetricCard
+                label="Edge after spread"
+                value="2.8pp"
+                valueCls="text-emerald-600 dark:text-emerald-400"
+                tooltip="How much of the raw dislocation remains after subtracting friction. This is your net opportunity — the cushion above break-even."
+              />
             </div>
 
             {/* Evidence */}
@@ -482,6 +648,9 @@ export default function PolymarketRelativeValueTerminal() {
                     </div>
                   ))}
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Episode history requires CLOB /prices-history integration (Phase 2).
+                </p>
               </div>
             </div>
 
@@ -491,8 +660,8 @@ export default function PolymarketRelativeValueTerminal() {
               <Alert className="bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-900">
                 <AlertDescription className="text-amber-900 dark:text-amber-300">
                   Friction is a conservative proxy (current spreads, not historical). Structural
-                  constraint is definitional for identically-worded strike markets. Sample: 8
-                  episodes over 30 days.
+                  constraint is definitional for identically-worded strike markets. Depth and sigma
+                  normalization require CLOB integration.
                 </AlertDescription>
               </Alert>
             </div>
