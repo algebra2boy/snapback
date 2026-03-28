@@ -494,7 +494,7 @@ export default function PolymarketRelativeValueTerminal() {
             {/* ── Summary stats ── */}
             <div>
               <p className="text-sm font-semibold mb-3">Summary</p>
-              <div className="grid grid-cols-4 divide-x divide-border border border-border rounded-xl overflow-hidden">
+              <div className="grid grid-cols-4 divide-x divide-border border border-border rounded-xl">
                 {[
                   {
                     label: "Net cost",
@@ -518,8 +518,13 @@ export default function PolymarketRelativeValueTerminal() {
                     valueCls: "text-emerald-500",
                     tooltip: "How much of the raw dislocation remains after subtracting friction. This is your net opportunity — the cushion above break-even.",
                   },
-                ].map(({ label, value, valueCls, tooltip }) => (
-                  <div key={label} className="px-5 py-4">
+                ].map(({ label, value, valueCls, tooltip }, i, arr) => (
+                  <div
+                    key={label}
+                    className={`px-5 py-4 bg-background ${
+                      i === 0 ? "rounded-l-xl" : i === arr.length - 1 ? "rounded-r-xl" : ""
+                    }`}
+                  >
                     <div className="flex items-center gap-1.5 mb-1">
                       <p className="text-xs text-muted-foreground">{label}</p>
                       <Tooltip text={tooltip} />
