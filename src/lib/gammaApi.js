@@ -207,20 +207,20 @@ export function getStatus(rawDislocation) {
 }
 
 export const TYPE_CLS = {
-  "Strike ladder": "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
-  "Expiry curve":  "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-300",
-  "Mutex set":     "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-300",
+  "Strike ladder": "bg-violet-100 text-violet-800",
+  "Expiry curve":  "bg-emerald-100 text-emerald-900",
+  "Mutex set":     "bg-orange-100 text-orange-900",
 };
 
 export const STATUS_CLS = {
-  Actionable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  Watchlist:  "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  Actionable: "bg-emerald-100 text-emerald-800",
+  Watchlist:  "bg-amber-100 text-amber-800",
   Normal:     "",
 };
 
 export const SEVERITY_CLS = {
-  Actionable: "text-emerald-600 dark:text-emerald-400",
-  Watchlist:  "text-amber-600 dark:text-amber-400",
+  Actionable: "text-emerald-600",
+  Watchlist:  "text-amber-600",
   Normal:     "text-muted-foreground",
 };
 
