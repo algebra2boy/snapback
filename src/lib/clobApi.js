@@ -6,6 +6,33 @@ const CLOB_BASE = import.meta.env.DEV
   : "https://clob.polymarket.com";
 
 /**
+ * Fetch the order book for a single CLOB token (YES token ID).
+ * @param {string} tokenId - The clobTokenId (YES outcome token)
+ * @returns {Promise<{bids, asks, topBid, topAsk, mid, spread}>}
+ *   bids/asks sorted best-first; prices in [0,1]; spread = topAsk - topBid
+ */
+export async function fetchOrderBook(tokenId) {
+  const url = `${CLOB_BASE}/book?token_id=${tokenId}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+  if (!res.ok) throw new Error(`CLOB /book returned ${res.status}`);
+  const json = await res.json();
+
+  const bids = (json.bids ?? [])
+    .map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }))
+    .sort((a, b) => b.price - a.price);
+  const asks = (json.asks ?? [])
+    .map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }))
+    .sort((a, b) => a.price - b.price);
+
+  const topBid = bids[0]?.price ?? null;
+  const topAsk = asks[0]?.price ?? null;
+  const mid    = topBid != null && topAsk != null ? (topBid + topAsk) / 2 : null;
+  const spread = topBid != null && topAsk != null ? topAsk - topBid : null;
+
+  return { bids, asks, topBid, topAsk, mid, spread };
+}
+
+/**
  * Fetch price history for a single CLOB token (YES token ID).
  * @param {string} tokenId - The clobTokenId (YES outcome token)
  * @param {object} opts

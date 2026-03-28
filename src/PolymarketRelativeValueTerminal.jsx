@@ -11,7 +11,7 @@ import {
   getQuestion,
   getClobTokenId,
 } from "@/lib/gammaApi";
-import { fetchPriceHistory } from "@/lib/clobApi";
+import { fetchPriceHistory, fetchOrderBook } from "@/lib/clobApi";
 
 // ── P&L chart data (static until CLOB is wired in) ───────────────────────────
 const REPAIR_PCTS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
@@ -84,6 +84,8 @@ export default function PolymarketRelativeValueTerminal() {
   const [heroFamily, setHeroFamily] = useState(null);
   const [clobLoading, setClobLoading] = useState(false);
   const [clobHistory, setClobHistory] = useState(null); // { seriesA, seriesB, labelA, labelB }
+  const [bookData, setBookData] = useState(null);       // { legA: book, legB: book }
+  const [bookLoading, setBookLoading] = useState(false);
 
   // ── Fetch Gamma families ──
   useEffect(() => {
@@ -149,6 +151,38 @@ export default function PolymarketRelativeValueTerminal() {
       }
     }
     loadHistory();
+    return () => { cancelled = true; };
+  }, [heroFamily]);
+
+  // ── Fetch CLOB order book (both legs) when hero family changes ──
+  useEffect(() => {
+    if (!heroFamily || heroFamily.isSeed || !heroFamily.dislocation?.violatingPair) {
+      setBookData(null);
+      return;
+    }
+    const [mktA, mktB] = heroFamily.dislocation.violatingPair;
+    const tokenA = getClobTokenId(mktA);
+    const tokenB = getClobTokenId(mktB);
+    if (!tokenA || !tokenB) { setBookData(null); return; }
+
+    let cancelled = false;
+    async function loadBook() {
+      setBookLoading(true);
+      try {
+        const [legA, legB] = await Promise.all([
+          fetchOrderBook(tokenA),
+          fetchOrderBook(tokenB),
+        ]);
+        if (cancelled) return;
+        setBookData({ legA, legB });
+      } catch (err) {
+        console.warn("CLOB /book unavailable:", err.message);
+        if (!cancelled) setBookData(null);
+      } finally {
+        if (!cancelled) setBookLoading(false);
+      }
+    }
+    loadBook();
     return () => { cancelled = true; };
   }, [heroFamily]);
 
@@ -381,9 +415,52 @@ export default function PolymarketRelativeValueTerminal() {
     c.update();
   }, [clobHistory]);
 
+  // ── Update P&L chart when live book data arrives ──
+  useEffect(() => {
+    if (!pnlChart.current || !bookData || !heroFamily?.dislocation?.violatingPair) return;
+    const [mktA, mktB] = heroFamily.dislocation.violatingPair;
+    const TARGET = 100;
+    const priceA  = bookData.legA.topAsk ?? mktA.yesPrice;
+    const sharesA = Math.round(TARGET / priceA);
+    const noPrice = bookData.legB.topBid != null ? 1 - bookData.legB.topBid : 1 - mktB.yesPrice;
+    const sharesB = Math.round(TARGET / noPrice);
+    const frictionA = bookData.legA.spread != null ? sharesA * bookData.legA.spread / 2 : sharesA * priceA * 0.02;
+    const frictionB = bookData.legB.spread != null ? sharesB * bookData.legB.spread / 2 : sharesB * noPrice * 0.02;
+    const totalFriction = frictionA + frictionB;
+    const totalShares   = sharesA + sharesB;
+    const c = pnlChart.current;
+    c.data.datasets[0].data = REPAIR_PCTS.map(r =>
+      Math.round((totalShares * (r / 100) - totalFriction) * 100) / 100
+    );
+    c.update();
+  }, [bookData, heroFamily]);
+
   // ── Derived values ──
   const actionableCount = scannerRows.filter(r => r.status === "Actionable").length;
   const dislocatedCount = scannerRows.filter(r => r.rawDislocation > 0).length;
+
+  // ── Live spread economics (computed from book data) ──
+  let spreadCalc = null;
+  if (bookData && heroFamily?.dislocation?.violatingPair) {
+    const [mktA, mktB] = heroFamily.dislocation.violatingPair;
+    const TARGET = 100;
+    const priceA  = bookData.legA.topAsk ?? mktA.yesPrice;
+    const sharesA = Math.round(TARGET / priceA);
+    const costA   = sharesA * priceA;
+    const maxGainA = sharesA * (1 - priceA);
+    const frictionA = bookData.legA.spread != null ? sharesA * bookData.legA.spread / 2 : costA * 0.02;
+    const noPrice = bookData.legB.topBid != null ? 1 - bookData.legB.topBid : 1 - mktB.yesPrice;
+    const sharesB = Math.round(TARGET / noPrice);
+    const costB   = sharesB * noPrice;
+    const maxGainB = sharesB * (1 - noPrice);
+    const frictionB = bookData.legB.spread != null ? sharesB * bookData.legB.spread / 2 : costB * 0.02;
+    const totalFriction    = frictionA + frictionB;
+    const netCost          = costA + costB;
+    const totalShares      = sharesA + sharesB;
+    const breakevenRepairPp = (totalFriction / totalShares) * 100;
+    const edgePp           = heroFamily.rawDislocation * 100 - breakevenRepairPp;
+    spreadCalc = { priceA, sharesA, costA, maxGainA, priceB: noPrice, sharesB, costB, maxGainB, totalFriction, netCost, breakevenRepairPp, edgePp };
+  }
 
   function violationText() {
     if (!heroFamily?.dislocation) return null;
@@ -601,9 +678,15 @@ export default function PolymarketRelativeValueTerminal() {
                     Direction is structurally implied. The UI stays explicit about what is live versus what is still proxy data.
                   </p>
                 </div>
-                <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
-                  Auto-generated
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {bookLoading && <span className="text-xs text-muted-foreground animate-pulse">Loading book…</span>}
+                  {bookData && !bookLoading && (
+                    <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">Live book</span>
+                  )}
+                  <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                    Auto-generated
+                  </Badge>
+                </div>
               </div>
             </div>
 
@@ -622,12 +705,10 @@ export default function PolymarketRelativeValueTerminal() {
                   </p>
                   <div className="space-y-2.5 text-sm">
                     {[
-                      ["Token", heroFamily?.dislocation?.violatingPair
-                        ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}`
-                        : "YES @ $0.38"],
-                      ["Shares", "263"],
-                      ["Cost", "$99.94"],
-                      ["Max gain", "+$163.06"],
+                      ["Token",    spreadCalc ? `YES @ $${spreadCalc.priceA.toFixed(3)}` : heroFamily?.dislocation?.violatingPair ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}` : "YES @ $0.38"],
+                      ["Shares",   spreadCalc ? String(spreadCalc.sharesA) : "—"],
+                      ["Cost",     spreadCalc ? `$${spreadCalc.costA.toFixed(2)}` : "—"],
+                      ["Max gain", spreadCalc ? `+$${spreadCalc.maxGainA.toFixed(2)}` : "—"],
                     ].map(([label, val]) => (
                       <div key={label} className="flex items-center justify-between">
                         <span className="text-muted-foreground">{label}</span>
@@ -635,6 +716,31 @@ export default function PolymarketRelativeValueTerminal() {
                       </div>
                     ))}
                   </div>
+                  {bookData && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Depth (YES)</p>
+                      <div className="grid grid-cols-2 gap-x-3 text-[11px]">
+                        <div>
+                          <p className="mb-1 text-muted-foreground">Bids</p>
+                          {bookData.legA.bids.slice(0, 3).map((b, i) => (
+                            <div key={i} className="flex justify-between tabular-nums">
+                              <span className="text-emerald-600">{b.price.toFixed(3)}</span>
+                              <span className="text-muted-foreground">{b.size.toFixed(0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <p className="mb-1 text-muted-foreground">Asks</p>
+                          {bookData.legA.asks.slice(0, 3).map((a, i) => (
+                            <div key={i} className="flex justify-between tabular-nums">
+                              <span className="text-red-500">{a.price.toFixed(3)}</span>
+                              <span className="text-muted-foreground">{a.size.toFixed(0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {/* Leg B */}
                 <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
@@ -648,12 +754,10 @@ export default function PolymarketRelativeValueTerminal() {
                   </p>
                   <div className="space-y-2.5 text-sm">
                     {[
-                      ["Token", heroFamily?.dislocation?.violatingPair
-                        ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}`
-                        : "NO @ $0.58"],
-                      ["Shares", "172"],
-                      ["Cost", "$99.76"],
-                      ["Max gain", "+$72.24"],
+                      ["Token",    spreadCalc ? `NO @ $${spreadCalc.priceB.toFixed(3)}` : heroFamily?.dislocation?.violatingPair ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}` : "NO @ $0.58"],
+                      ["Shares",   spreadCalc ? String(spreadCalc.sharesB) : "—"],
+                      ["Cost",     spreadCalc ? `$${spreadCalc.costB.toFixed(2)}` : "—"],
+                      ["Max gain", spreadCalc ? `+$${spreadCalc.maxGainB.toFixed(2)}` : "—"],
                     ].map(([label, val]) => (
                       <div key={label} className="flex items-center justify-between">
                         <span className="text-muted-foreground">{label}</span>
@@ -661,6 +765,31 @@ export default function PolymarketRelativeValueTerminal() {
                       </div>
                     ))}
                   </div>
+                  {bookData && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Depth (YES · implied NO)</p>
+                      <div className="grid grid-cols-2 gap-x-3 text-[11px]">
+                        <div>
+                          <p className="mb-1 text-muted-foreground">NO bids (1−ask)</p>
+                          {bookData.legB.asks.slice(0, 3).map((a, i) => (
+                            <div key={i} className="flex justify-between tabular-nums">
+                              <span className="text-emerald-600">{(1 - a.price).toFixed(3)}</span>
+                              <span className="text-muted-foreground">{a.size.toFixed(0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <p className="mb-1 text-muted-foreground">NO asks (1−bid)</p>
+                          {bookData.legB.bids.slice(0, 3).map((b, i) => (
+                            <div key={i} className="flex justify-between tabular-nums">
+                              <span className="text-red-500">{(1 - b.price).toFixed(3)}</span>
+                              <span className="text-muted-foreground">{b.size.toFixed(0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -669,7 +798,7 @@ export default function PolymarketRelativeValueTerminal() {
                 <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
                   <div>
                     <p className="text-sm font-semibold text-slate-950">P&amp;L vs. repair amount</p>
-                    <p className="mt-1 text-sm text-muted-foreground">Illustrative until CLOB-backed spread economics replace the placeholder curve.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{spreadCalc ? "Live — sized from CLOB top-of-book." : "Illustrative until CLOB book loads."}</p>
                   </div>
                   <div className="flex gap-4 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1.5">
@@ -694,24 +823,24 @@ export default function PolymarketRelativeValueTerminal() {
                   {[
                     {
                       label: "Net cost",
-                      value: "$199.70",
+                      value: spreadCalc ? `$${spreadCalc.netCost.toFixed(2)}` : "—",
                       tooltip: "Total upfront spend across both legs. This is your maximum possible loss if both sides go to zero.",
                     },
                     {
                       label: "All-in friction",
-                      value: "$4.82",
+                      value: spreadCalc ? `$${spreadCalc.totalFriction.toFixed(2)}` : "—",
                       valueCls: "text-amber-600",
-                      tooltip: "Estimated transaction costs — bid/ask spread and slippage on both legs combined. Subtracted from your gross P&L.",
+                      tooltip: "Estimated transaction costs — half-spread slippage on both legs combined. Subtracted from your gross P&L.",
                     },
                     {
                       label: "Break-even repair",
-                      value: "1.2pp",
+                      value: spreadCalc ? `${spreadCalc.breakevenRepairPp.toFixed(1)}pp` : "—",
                       tooltip: "The minimum amount the dislocation must close (in percentage points) for you to cover friction costs and not lose money.",
                     },
                     {
                       label: "Edge after spread",
-                      value: "2.8pp",
-                      valueCls: "text-emerald-600",
+                      value: spreadCalc ? `${spreadCalc.edgePp.toFixed(1)}pp` : "—",
+                      valueCls: spreadCalc ? (spreadCalc.edgePp > 0 ? "text-emerald-600" : "text-red-600") : "",
                       tooltip: "How much of the raw dislocation remains after subtracting friction. This is your net opportunity — the cushion above break-even.",
                     },
                   ].map(({ label, value, valueCls, tooltip }) => (
@@ -757,7 +886,9 @@ export default function PolymarketRelativeValueTerminal() {
               {/* ── Model risk ── */}
               <Alert className="border-amber-200 bg-amber-50">
                 <AlertDescription className="text-sm leading-6 text-amber-800">
-                  Friction is a conservative proxy. Depth and σ normalization are not yet live-computed, so the UI keeps those areas framed as incomplete evidence rather than definitive analytics.
+                  {spreadCalc
+                    ? "Sizing and friction computed from live CLOB top-of-book. σ normalization and PIT backtest still require CLOB history integration (Phase 2)."
+                    : "Friction is a conservative proxy. Depth and σ normalization are not yet live-computed, so the UI keeps those areas framed as incomplete evidence rather than definitive analytics."}
                 </AlertDescription>
               </Alert>
 

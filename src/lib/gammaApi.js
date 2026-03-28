@@ -262,7 +262,7 @@ export const SEED_ROWS = [
 
 export async function fetchFamilies() {
   const res = await fetch(
-    `${GAMMA_BASE}/events?active=true&closed=false&limit=100`,
+    `${GAMMA_BASE}/events?active=true&closed=false&limit=1000`,
     { signal: AbortSignal.timeout(8_000) }
   );
   if (!res.ok) throw new Error(`Gamma /events returned ${res.status}`);
