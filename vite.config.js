@@ -10,4 +10,18 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      "/api/gamma": {
+        target: "https://gamma-api.polymarket.com",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/gamma/, ""),
+      },
+      "/api/clob": {
+        target: "https://clob.polymarket.com",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/clob/, ""),
+      },
+    },
+  },
 });

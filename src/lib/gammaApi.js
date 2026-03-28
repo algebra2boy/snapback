@@ -1,12 +1,26 @@
 // Polymarket Gamma API integration
 // Docs: gamma-api.polymarket.com/events + gamma-api.polymarket.com/markets
 
-const GAMMA_BASE = "https://gamma-api.polymarket.com";
+const GAMMA_BASE = import.meta.env.DEV
+  ? "/api/gamma"
+  : "https://gamma-api.polymarket.com";
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
 
 export function getQuestion(market) {
   return market.question || market.groupItemTitle || market.title || "";
+}
+
+// Returns the YES-outcome CLOB token ID for a market, or null if unavailable.
+export function getClobTokenId(market) {
+  try {
+    const ids = Array.isArray(market.clobTokenIds)
+      ? market.clobTokenIds
+      : JSON.parse(market.clobTokenIds || "[]");
+    return ids[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseYesPrice(market) {

@@ -9,7 +9,9 @@ import {
   SEED_ROWS,
   computeNoArbEnvelope,
   getQuestion,
+  getClobTokenId,
 } from "@/lib/gammaApi";
+import { fetchPriceHistory } from "@/lib/clobApi";
 
 // ── P&L chart data (static until CLOB is wired in) ───────────────────────────
 const REPAIR_PCTS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
@@ -60,20 +62,30 @@ function FreshnessBadge({ dataAge, isSeed }) {
   );
 }
 
+// ── Format ms timestamp as "MMM D HH:MM" ─────────────────────────────────────
+function fmtTime(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 // ── Main terminal ─────────────────────────────────────────────────────────────
 export default function PolymarketRelativeValueTerminal() {
-  const strikeChartRef = useRef(null);
-  const pnlChartRef    = useRef(null);
-  const strikeChart    = useRef(null);
-  const pnlChart       = useRef(null);
+  const strikeChartRef  = useRef(null);
+  const pnlChartRef     = useRef(null);
+  const historyChartRef = useRef(null);
+  const strikeChart     = useRef(null);
+  const pnlChart        = useRef(null);
+  const historyChart    = useRef(null);
 
   const [scannerRows, setScannerRows] = useState(SEED_ROWS);
   const [loading, setLoading]         = useState(true);
   const [isSeed, setIsSeed]           = useState(true);
   const [dataAge, setDataAge]         = useState(null);
   const [heroFamily, setHeroFamily]   = useState(null);
+  const [clobLoading, setClobLoading] = useState(false);
+  const [clobHistory, setClobHistory] = useState(null); // { seriesA, seriesB, labelA, labelB }
 
-  // ── Fetch ──
+  // ── Fetch Gamma families ──
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -97,6 +109,48 @@ export default function PolymarketRelativeValueTerminal() {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  // ── Fetch CLOB price history when hero family changes ──
+  useEffect(() => {
+    if (!heroFamily || heroFamily.isSeed) {
+      setClobHistory(null);
+      return;
+    }
+
+    // Pick the two markets to chart: violating pair if available, else top 2 by price
+    const markets = heroFamily.dislocation?.violatingPair ?? heroFamily.markets.slice(0, 2);
+    if (!markets || markets.length < 2) { setClobHistory(null); return; }
+
+    const [mktA, mktB] = markets;
+    const tokenA = getClobTokenId(mktA);
+    const tokenB = getClobTokenId(mktB);
+    if (!tokenA || !tokenB) { setClobHistory(null); return; }
+
+    let cancelled = false;
+    async function loadHistory() {
+      setClobLoading(true);
+      try {
+        const [seriesA, seriesB] = await Promise.all([
+          fetchPriceHistory(tokenA, { hoursBack: 48, fidelity: 60 }),
+          fetchPriceHistory(tokenB, { hoursBack: 48, fidelity: 60 }),
+        ]);
+        if (cancelled) return;
+        setClobHistory({
+          seriesA,
+          seriesB,
+          labelA: getQuestion(mktA).slice(0, 40),
+          labelB: getQuestion(mktB).slice(0, 40),
+        });
+      } catch (err) {
+        console.warn("CLOB history unavailable:", err.message);
+        if (!cancelled) setClobHistory(null);
+      } finally {
+        if (!cancelled) setClobLoading(false);
+      }
+    }
+    loadHistory();
+    return () => { cancelled = true; };
+  }, [heroFamily]);
 
   // ── Init charts once ──
   useEffect(() => {
@@ -220,9 +274,46 @@ export default function PolymarketRelativeValueTerminal() {
       },
     });
 
+    historyChart.current = new Chart(historyChartRef.current, {
+      type: "line",
+      data: { labels: [], datasets: [] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: txt, font: { size: 11 }, boxWidth: 10, padding: 12 },
+          },
+          tooltip: {
+            backgroundColor: isDark ? "#1c1c1c" : "#fff",
+            titleColor: isDark ? "#fff" : "#111",
+            bodyColor: isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)",
+            borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+            borderWidth: 1,
+            callbacks: { label: (ctx) => `${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(1)}¢` },
+          },
+        },
+        scales: {
+          y: {
+            min: 0,
+            max: 1,
+            title: { display: true, text: "Probability", color: txt, font: { size: 11 } },
+            grid: { color: grid },
+            ticks: { color: txt, font: { size: 11 }, callback: (v) => `${(v * 100).toFixed(0)}¢` },
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: txt, font: { size: 11 }, maxTicksLimit: 8, maxRotation: 0 },
+          },
+        },
+      },
+    });
+
     return () => {
       strikeChart.current?.destroy();
       pnlChart.current?.destroy();
+      historyChart.current?.destroy();
     };
   }, []);
 
@@ -240,6 +331,52 @@ export default function PolymarketRelativeValueTerminal() {
     c.data.datasets[1].pointBorderColor      = colors;
     c.update();
   }, [heroFamily]);
+
+  // ── Update history chart on clobHistory change ──
+  useEffect(() => {
+    if (!historyChart.current) return;
+    const c = historyChart.current;
+
+    if (!clobHistory || !clobHistory.seriesA.length) {
+      c.data.labels   = [];
+      c.data.datasets = [];
+      c.update();
+      return;
+    }
+
+    const { seriesA, seriesB, labelA, labelB } = clobHistory;
+
+    // Align on seriesA timestamps as the x-axis spine
+    c.data.labels = seriesA.map((pt) => fmtTime(pt.t));
+
+    // Build a lookup for seriesB by timestamp for alignment
+    const bByTime = new Map(seriesB.map((pt) => [pt.t, pt.p]));
+
+    c.data.datasets = [
+      {
+        label: labelA,
+        data: seriesA.map((pt) => pt.p),
+        borderColor: "#378ADD",
+        backgroundColor: "rgba(55,138,221,0.06)",
+        fill: false,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.3,
+      },
+      {
+        label: labelB,
+        data: seriesA.map((pt) => bByTime.get(pt.t) ?? null),
+        borderColor: "#FF5000",
+        backgroundColor: "rgba(255,80,0,0.06)",
+        fill: false,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.3,
+        spanGaps: true,
+      },
+    ];
+    c.update();
+  }, [clobHistory]);
 
   // ── Derived values ──
   const actionableCount = scannerRows.filter(r => r.status === "Actionable").length;
@@ -334,7 +471,7 @@ export default function PolymarketRelativeValueTerminal() {
         {/* ── Main content ── */}
         <main className="flex-1 min-w-0 overflow-y-auto">
 
-          {/* ── Family header + chart ── */}
+          {/* ── Family header + snapshot chart ── */}
           <section className="px-8 pt-7 pb-6 border-b border-border">
 
             {/* Title row */}
@@ -361,7 +498,7 @@ export default function PolymarketRelativeValueTerminal() {
               </div>
             </div>
 
-            {/* Chart */}
+            {/* Snapshot chart */}
             <div className="relative h-72">
               <canvas ref={strikeChartRef} />
             </div>
@@ -380,6 +517,33 @@ export default function PolymarketRelativeValueTerminal() {
                 <span className="size-2.5 rounded-full bg-[#FF5000]" />
                 Violation
               </span>
+            </div>
+          </section>
+
+          {/* ── CLOB price history (48h) ── */}
+          <section className="px-8 py-6 border-b border-border">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">Price history · 48h</p>
+              {clobLoading && (
+                <span className="text-xs text-muted-foreground animate-pulse">Loading CLOB history…</span>
+              )}
+              {!clobLoading && clobHistory && (
+                <span className="text-xs text-muted-foreground">via CLOB /prices-history</span>
+              )}
+              {!clobLoading && !clobHistory && !heroFamily?.isSeed && heroFamily && (
+                <span className="text-xs text-red-400">CLOB history unavailable</span>
+              )}
+            </div>
+            <div className="relative h-52">
+              {/* Canvas is always mounted so Chart.js can bind; content driven by clobHistory */}
+              <canvas ref={historyChartRef} className={clobHistory ? "" : "opacity-0"} />
+              {!clobHistory && !clobLoading && (
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+                  {heroFamily && !heroFamily.isSeed
+                    ? "No CLOB history data"
+                    : "Select a live family to view history"}
+                </div>
+              )}
             </div>
           </section>
 
