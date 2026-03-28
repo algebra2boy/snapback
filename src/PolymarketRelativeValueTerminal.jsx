@@ -157,6 +157,10 @@ export default function PolymarketRelativeValueTerminal() {
     const grid = "rgba(148,163,184,0.18)";
     const txt = "rgba(71,85,105,0.92)";
 
+    strikeChart.current?.destroy();
+    pnlChart.current?.destroy();
+    historyChart.current?.destroy();
+
     strikeChart.current = new Chart(strikeChartRef.current, {
       type: "line",
       data: {
@@ -285,10 +289,10 @@ export default function PolymarketRelativeValueTerminal() {
             labels: { color: txt, font: { size: 11 }, boxWidth: 10, padding: 12 },
           },
           tooltip: {
-            backgroundColor: isDark ? "#1c1c1c" : "#fff",
-            titleColor: isDark ? "#fff" : "#111",
-            bodyColor: isDark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)",
-            borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+            backgroundColor: "#ffffff",
+            titleColor: "#111827",
+            bodyColor: "rgba(15,23,42,0.72)",
+            borderColor: "rgba(15,23,42,0.1)",
             borderWidth: 1,
             callbacks: { label: (ctx) => `${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(1)}¢` },
           },
