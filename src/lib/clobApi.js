@@ -33,6 +33,21 @@ export async function fetchOrderBook(tokenId) {
 }
 
 /**
+ * Fetch 30-day daily price history for two tokens and return both series.
+ * Used for σ normalization and PIT backtest.
+ * @param {string} tokenA
+ * @param {string} tokenB
+ * @returns {Promise<{ seriesA, seriesB }>}
+ */
+export async function fetch30dHistory(tokenA, tokenB) {
+  const [seriesA, seriesB] = await Promise.all([
+    fetchPriceHistory(tokenA, { hoursBack: 720, fidelity: 1440 }),
+    fetchPriceHistory(tokenB, { hoursBack: 720, fidelity: 1440 }),
+  ]);
+  return { seriesA, seriesB };
+}
+
+/**
  * Fetch price history for a single CLOB token (YES token ID).
  * @param {string} tokenId - The clobTokenId (YES outcome token)
  * @param {object} opts
