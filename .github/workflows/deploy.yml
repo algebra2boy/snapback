@@ -25,6 +25,9 @@ jobs:
           cache: npm
       - run: npm ci --legacy-peer-deps
       - run: npm run build
+        env:
+          VITE_GAMMA_BASE: ${{ secrets.VITE_GAMMA_BASE }}
+          VITE_CLOB_BASE: ${{ secrets.VITE_CLOB_BASE }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

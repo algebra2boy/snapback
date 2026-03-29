@@ -1,9 +1,7 @@
 // Polymarket Gamma API integration
 // Docs: gamma-api.polymarket.com/events + gamma-api.polymarket.com/markets
 
-const GAMMA_BASE = import.meta.env.PROD
-  ? "https://gamma-api.polymarket.com"
-  : "/api/gamma";
+const GAMMA_BASE = "/api/gamma";
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
 
