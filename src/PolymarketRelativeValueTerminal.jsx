@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
 import { Info, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,8 @@ import {
 import {
   buildSpreadSeries,
   computeSigmaScore,
+  detectEpisodes,
+  episodePnl,
   runBacktest,
 } from "@/lib/PITStats";
 
@@ -148,6 +150,543 @@ function FreshnessBadge({ dataAge, isSeed }) {
   );
 }
 
+// ── Replay modal ──────────────────────────────────────────────────────────────
+function ReplayModal({ open, onClose, spreadSeries, heroFamily }) {
+  const chartRef = useRef(null);
+  const chartInst = useRef(null);
+
+  const { episodes, pnls } = useMemo(() => {
+    if (!spreadSeries || spreadSeries.length < 10)
+      return { episodes: [], pnls: [] };
+    const eps = detectEpisodes(spreadSeries);
+    return { episodes: eps, pnls: eps.map((ep) => episodePnl(ep)) };
+  }, [spreadSeries]);
+
+  useEffect(() => {
+    if (!open || !chartRef.current || !spreadSeries?.length) return;
+
+    chartInst.current?.destroy();
+
+    const grid = "rgba(148,163,184,0.18)";
+    const txt = "rgba(71,85,105,0.92)";
+
+    const labels = spreadSeries.map((pt) => {
+      const d = new Date(pt.t);
+      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    });
+    const spreads = spreadSeries.map((pt) => +(pt.spread * 100).toFixed(2));
+
+    // Per-point visual overrides for entry/exit markers
+    const pointRadii = spreadSeries.map(() => 0);
+    const pointBg = spreadSeries.map(() => "transparent");
+    const pointBorder = spreadSeries.map(() => "transparent");
+
+    for (const ep of episodes) {
+      if (ep.entryIdx < pointRadii.length) {
+        pointRadii[ep.entryIdx] = 5;
+        pointBg[ep.entryIdx] = "#ef4444";
+        pointBorder[ep.entryIdx] = "#ef4444";
+      }
+      if (ep.closeIdx < pointRadii.length) {
+        pointRadii[ep.closeIdx] = 5;
+        pointBg[ep.closeIdx] = "#10b981";
+        pointBorder[ep.closeIdx] = "#10b981";
+      }
+    }
+
+    chartInst.current = new Chart(chartRef.current, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Spread (pp)",
+            data: spreads,
+            borderColor: "#378ADD",
+            backgroundColor: "rgba(55,138,221,0.06)",
+            borderWidth: 1.5,
+            pointRadius: pointRadii,
+            pointBackgroundColor: pointBg,
+            pointBorderColor: pointBorder,
+            pointBorderWidth: 2,
+            tension: 0.2,
+            fill: false,
+          },
+          {
+            label: "Zero",
+            data: spreadSeries.map(() => 0),
+            borderColor: "rgba(100,116,139,0.35)",
+            borderWidth: 1,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#ffffff",
+            titleColor: "#111827",
+            bodyColor: "rgba(15,23,42,0.72)",
+            borderColor: "rgba(15,23,42,0.1)",
+            borderWidth: 1,
+            filter: (item) => item.datasetIndex === 0,
+            callbacks: {
+              label: (ctx) => `Spread: ${ctx.parsed.y.toFixed(2)}pp`,
+            },
+          },
+        },
+        scales: {
+          y: {
+            grid: { color: grid },
+            ticks: {
+              color: txt,
+              font: { size: 11 },
+              callback: (v) => `${v.toFixed(1)}pp`,
+            },
+          },
+          x: {
+            grid: { display: false },
+            ticks: {
+              color: txt,
+              font: { size: 11 },
+              maxTicksLimit: 8,
+              maxRotation: 0,
+            },
+          },
+        },
+      },
+    });
+
+    return () => {
+      chartInst.current?.destroy();
+      chartInst.current = null;
+    };
+  }, [open, spreadSeries, episodes]);
+
+  if (!open) return null;
+
+  const fmtDate = (ms) =>
+    new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div
+        className="relative flex w-full max-w-2xl flex-col rounded-2xl border border-border/80 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.18)]"
+        style={{ maxHeight: "85vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Episode replay
+            </h2>
+            {heroFamily && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {heroFamily.family} · 30-day spread history
+              </p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-slate-900"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto px-6 py-5">
+          {!spreadSeries?.length ? (
+            <p className="text-sm text-muted-foreground">
+              Select a family with 30-day history loaded to view the replay.
+            </p>
+          ) : (
+            <div className="space-y-5">
+              {/* Legend */}
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block size-2.5 rounded-full bg-red-500" />
+                  Entry (σ ≥ 2)
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block size-2.5 rounded-full bg-emerald-500" />
+                  Exit (σ ≤ 0.5 or 7d)
+                </span>
+              </div>
+
+              {/* Chart */}
+              <div className="h-52">
+                <canvas ref={chartRef} />
+              </div>
+
+              {/* Episode table */}
+              {episodes.length === 0 ? (
+                <p className="text-center text-xs text-muted-foreground">
+                  No episodes triggered in this window (need σ ≥ 2).
+                </p>
+              ) : (
+                <div>
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Episodes ({episodes.length})
+                  </p>
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="px-4 py-2.5">Entry</th>
+                          <th className="px-4 py-2.5">Entry spread</th>
+                          <th className="px-4 py-2.5">Entry σ</th>
+                          <th className="px-4 py-2.5">Duration</th>
+                          <th className="px-4 py-2.5">Close spread</th>
+                          <th className="px-4 py-2.5">P&L / $100</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {episodes.map((ep, i) => {
+                          const pnl = pnls[i];
+                          return (
+                            <tr
+                              key={i}
+                              className="border-b border-slate-100 last:border-0"
+                            >
+                              <td className="px-4 py-2.5 text-slate-700">
+                                {fmtDate(ep.entryT)}
+                              </td>
+                              <td className="px-4 py-2.5 tabular-nums text-slate-700">
+                                {(ep.entrySpread * 100).toFixed(2)}pp
+                              </td>
+                              <td className="px-4 py-2.5 tabular-nums text-slate-700">
+                                {ep.entrySigma.toFixed(2)}σ
+                              </td>
+                              <td className="px-4 py-2.5 tabular-nums text-slate-700">
+                                {ep.durationDays.toFixed(1)}d
+                                {ep.timedOut && (
+                                  <span className="ml-1 text-amber-500">
+                                    ⏱
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 tabular-nums text-slate-700">
+                                {(ep.closeSpread * 100).toFixed(2)}pp
+                              </td>
+                              <td
+                                className={`px-4 py-2.5 tabular-nums font-medium ${pnl >= 0 ? "text-emerald-600" : "text-red-500"}`}
+                              >
+                                {pnl >= 0 ? "+" : ""}
+                                {pnl.toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    P&L per $100 at risk after 2% friction. ⏱ = timed-out
+                    without σ close.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end border-t border-border/60 px-6 py-4">
+          <Button
+            size="sm"
+            className="bg-slate-950 text-white hover:bg-slate-800"
+            onClick={onClose}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Spread order modal ────────────────────────────────────────────────────────
+function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
+  const [copied, setCopied] = useState(false);
+  if (!open) return null;
+
+  const isMutex = heroFamily?.type === "Mutex set";
+  const legAMarket = heroFamily?.dislocation?.violatingPair?.[0];
+  const legBMarket = heroFamily?.dislocation?.violatingPair?.[1];
+  const eventUrl = heroFamily?.eventSlug
+    ? `https://polymarket.com/event/${heroFamily.eventSlug}`
+    : null;
+
+  function buildClipboard() {
+    if (!spreadCalc || !heroFamily) return "";
+    const legASide = isMutex ? "NO" : "YES";
+    return [
+      `=== Spread Order — ${heroFamily.family} ===`,
+      ``,
+      `LEG A · Buy ${legASide}`,
+      `  Market : ${legAMarket ? getQuestion(legAMarket) : "—"}`,
+      `  Price  : $${spreadCalc.priceA.toFixed(3)}`,
+      `  Shares : ${spreadCalc.sharesA}`,
+      `  Cost   : $${spreadCalc.costA.toFixed(2)}`,
+      `  Max gain: +$${spreadCalc.maxGainA.toFixed(2)}`,
+      ``,
+      `LEG B · Buy NO`,
+      `  Market : ${legBMarket ? getQuestion(legBMarket) : "—"}`,
+      `  Price  : $${spreadCalc.priceB.toFixed(3)}`,
+      `  Shares : ${spreadCalc.sharesB}`,
+      `  Cost   : $${spreadCalc.costB.toFixed(2)}`,
+      `  Max gain: +$${spreadCalc.maxGainB.toFixed(2)}`,
+      ``,
+      `SUMMARY`,
+      `  Net cost        : $${spreadCalc.netCost.toFixed(2)}`,
+      `  Est. friction   : $${spreadCalc.totalFriction.toFixed(2)}`,
+      `  Breakeven repair: ${spreadCalc.breakevenRepairPp.toFixed(1)}pp`,
+      `  Edge after spread: ${spreadCalc.edgePp.toFixed(1)}pp`,
+      eventUrl ? `\n  Polymarket: ${eventUrl}` : "",
+    ].join("\n");
+  }
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(buildClipboard());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div
+        className="relative w-full max-w-lg rounded-2xl border border-border/80 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.18)] max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Spread order
+            </h2>
+            {heroFamily && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {heroFamily.family}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-muted-foreground hover:bg-slate-100 hover:text-slate-900 transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto px-6 py-5 space-y-4">
+          {!spreadCalc ? (
+            <p className="text-sm text-muted-foreground">
+              Select a family with live book data loaded to build a spread
+              order.
+            </p>
+          ) : (
+            <>
+              {/* Legs */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Leg A · Buy {isMutex ? "NO" : "YES"}
+                  </p>
+                  <p className="mb-3 text-xs font-medium leading-snug text-slate-900">
+                    {legAMarket
+                      ? getQuestion(legAMarket).slice(0, 60)
+                      : "—"}
+                  </p>
+                  {[
+                    ["Price", `$${spreadCalc.priceA.toFixed(3)}`],
+                    ["Shares", String(spreadCalc.sharesA)],
+                    ["Cost", `$${spreadCalc.costA.toFixed(2)}`],
+                    ["Max gain", `+$${spreadCalc.maxGainA.toFixed(2)}`],
+                  ].map(([label, val]) => (
+                    <div
+                      key={label}
+                      className="flex justify-between py-0.5 text-xs"
+                    >
+                      <span className="text-muted-foreground">{label}</span>
+                      <span
+                        className={`font-medium ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
+                      >
+                        {val}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Leg B · Buy NO
+                  </p>
+                  <p className="mb-3 text-xs font-medium leading-snug text-slate-900">
+                    {legBMarket
+                      ? getQuestion(legBMarket).slice(0, 60)
+                      : "—"}
+                  </p>
+                  {[
+                    ["Price", `$${spreadCalc.priceB.toFixed(3)}`],
+                    ["Shares", String(spreadCalc.sharesB)],
+                    ["Cost", `$${spreadCalc.costB.toFixed(2)}`],
+                    ["Max gain", `+$${spreadCalc.maxGainB.toFixed(2)}`],
+                  ].map(([label, val]) => (
+                    <div
+                      key={label}
+                      className="flex justify-between py-0.5 text-xs"
+                    >
+                      <span className="text-muted-foreground">{label}</span>
+                      <span
+                        className={`font-medium ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
+                      >
+                        {val}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Summary
+                </p>
+                <div className="space-y-1.5">
+                  {[
+                    ["Net cost", `$${spreadCalc.netCost.toFixed(2)}`, ""],
+                    [
+                      "Est. friction",
+                      `$${spreadCalc.totalFriction.toFixed(2)}`,
+                      "",
+                    ],
+                    [
+                      "Breakeven repair",
+                      `${spreadCalc.breakevenRepairPp.toFixed(1)}pp`,
+                      "",
+                    ],
+                    [
+                      "Edge after spread",
+                      `${spreadCalc.edgePp.toFixed(1)}pp`,
+                      spreadCalc.edgePp > 0
+                        ? "text-emerald-600"
+                        : "text-red-500",
+                    ],
+                  ].map(([label, val, cls]) => (
+                    <div key={label} className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className={`font-medium ${cls || "text-slate-900"}`}>
+                        {val}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Polymarket link */}
+              {eventUrl && (
+                <a
+                  href={eventUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:bg-slate-50"
+                >
+                  <span className="font-medium text-slate-900">
+                    Open on Polymarket
+                  </span>
+                  <span className="text-xs text-muted-foreground">↗</span>
+                </a>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 border-t border-border/60 px-6 py-4">
+          {spreadCalc ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopy}
+              className="text-xs"
+            >
+              {copied ? "Copied!" : "Copy order details"}
+            </Button>
+          ) : (
+            <div />
+          )}
+          <Button
+            size="sm"
+            className="bg-slate-950 text-white hover:bg-slate-800"
+            onClick={onClose}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Glossary modal ────────────────────────────────────────────────────────────
+function GlossaryModal({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div
+        className="relative w-full max-w-lg rounded-2xl border border-border/80 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.18)] max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Info className="size-4 text-slate-500" />
+            <h2 className="text-sm font-semibold text-slate-900">Glossary</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-muted-foreground hover:bg-slate-100 hover:text-slate-900 transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        {/* Terms */}
+        <div className="overflow-y-auto px-6 py-4 space-y-4">
+          {GLOSSARY.map(({ term, def }) => (
+            <div key={term}>
+              <p className="text-xs font-semibold text-slate-900">{term}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{def}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Format ms timestamp as "MMM D HH:MM" ─────────────────────────────────────
 function fmtTime(ms) {
   const d = new Date(ms);
@@ -230,8 +769,9 @@ export default function PolymarketRelativeValueTerminal() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [scannerPage, setScannerPage] = useState(1);
-  const [pageJumpValue, setPageJumpValue] = useState("1");
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [replayOpen, setReplayOpen] = useState(false);
   const [clobLoading, setClobLoading] = useState(false);
   const [clobHistory, setClobHistory] = useState(null); // { seriesA, seriesB, labelA, labelB }
   const [bookData, setBookData] = useState(null); // { legA: book, legB: book }
@@ -944,6 +1484,19 @@ export default function PolymarketRelativeValueTerminal() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <GlossaryModal open={glossaryOpen} onClose={() => setGlossaryOpen(false)} />
+      <SpreadOrderModal
+        open={orderModalOpen}
+        onClose={() => setOrderModalOpen(false)}
+        heroFamily={heroFamily}
+        spreadCalc={spreadCalc}
+      />
+      <ReplayModal
+        open={replayOpen}
+        onClose={() => setReplayOpen(false)}
+        spreadSeries={analyticsData?.spreadSeries ?? null}
+        heroFamily={heroFamily}
+      />
       {/* ── Top nav bar ── */}
       <header className="sticky top-0 z-20 border-b border-border/80 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
@@ -967,12 +1520,19 @@ export default function PolymarketRelativeValueTerminal() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-6 text-sm md:flex">
-              <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Families
-                </span>
-                <span className="font-semibold text-slate-900">
+            <div className="hidden items-center gap-5 text-sm md:flex">
+              <span className="flex items-center gap-1">
+                <button
+                  onClick={() => setGlossaryOpen(true)}
+                  className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
+                  aria-label="Open glossary"
+                  title="Open glossary"
+                >
+                  <Info className="size-3" />
+                  <span className="text-[10px] font-medium">Glossary</span>
+                </button>
+                <span className="text-muted-foreground">Families</span>
+                <span className="font-medium">
                   {loading ? "—" : scannerRows.length}
                 </span>
               </div>
@@ -2031,14 +2591,16 @@ export default function PolymarketRelativeValueTerminal() {
               <div className="flex flex-col gap-3 sm:flex-row pt-2">
                 <Button
                   size="lg"
-                  className="bg-slate-950 px-8 font-semibold text-white hover:bg-slate-800 shadow-sm"
+                  className="bg-slate-950 px-8 font-semibold text-white hover:bg-slate-800"
+                  onClick={() => setOrderModalOpen(true)}
                 >
                   Build spread order
                 </Button>
                 <Button
                   size="lg"
                   variant="outline"
-                  className="border-slate-300 bg-white px-8 text-slate-900 hover:bg-slate-50"
+                  className="border-slate-200 bg-white px-8 text-slate-900 hover:bg-slate-50"
+                  onClick={() => setReplayOpen(true)}
                 >
                   View replay
                 </Button>
