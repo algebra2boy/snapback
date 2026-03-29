@@ -69,8 +69,11 @@ export function computeSigmaScore(spreadSeries, currentDislocation) {
  * At each bar t, σ_t is computed using only spread[0..t-1].
  * Trigger: σ_t >= triggerSigma
  * Close:   σ_t <= closeSigma  OR  duration >= maxDays
+ *
+ * Each returned episode includes entryIdx/closeIdx and entryT/closeT so callers
+ * can annotate charts without a second pass.
  */
-function detectEpisodes(spreadSeries, { triggerSigma = 2, closeSigma = 0.5, maxDays = 7 } = {}) {
+export function detectEpisodes(spreadSeries, { triggerSigma = 2, closeSigma = 0.5, maxDays = 7 } = {}) {
   const episodes = [];
   let inEpisode = false;
   let entry = null;
@@ -94,6 +97,10 @@ function detectEpisodes(spreadSeries, { triggerSigma = 2, closeSigma = 0.5, maxD
       const durationDays = (spreadSeries[i].t - entry.t) / 86_400_000;
       if (sigma <= closeSigma || durationDays >= maxDays) {
         episodes.push({
+          entryIdx: entry.idx,
+          closeIdx: i,
+          entryT: entry.t,
+          closeT: spreadSeries[i].t,
           entrySpread: entry.spread,
           closeSpread: spreadSeries[i].spread,
           entrySigma: entry.sigma,
@@ -108,14 +115,11 @@ function detectEpisodes(spreadSeries, { triggerSigma = 2, closeSigma = 0.5, maxD
   return episodes;
 }
 
-// ── P&L per episode ───────────────────────────────────────────────────────────
-
 /**
- * P&L per $100 at risk for one episode.
- * profit = (entrySpread - closeSpread) * 100  (we profit when gap closes)
- * minus friction (expressed as fraction, e.g. 0.02 = 2%)
+ * Compute P&L (per $100 at risk) for one episode.
+ * profit = (entrySpread - closeSpread) * 100 - friction * 100
  */
-function episodePnl(ep, frictionFrac) {
+export function episodePnl(ep, frictionFrac = 0.02) {
   return (ep.entrySpread - ep.closeSpread) * 100 - frictionFrac * 100;
 }
 
