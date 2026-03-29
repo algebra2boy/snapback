@@ -166,7 +166,7 @@ export function computeDislocation(markets, familyType) {
       violatingPair,
       sorted,
       labels,
-      constraintDesc: `P(${labels[labels.length - 1]}) ≤ … ≤ P(${labels[0]})`,
+      constraintDesc: `Higher strike markets should get cheaper as the threshold rises, from ${labels[0]} up to ${labels[labels.length - 1]}.`,
     };
   }
 
@@ -201,7 +201,7 @@ export function computeDislocation(markets, familyType) {
       labels,
       constraintDesc:
         labels.length >= 2
-          ? `P(by ${labels[0]}) ≤ P(by ${labels[labels.length - 1]})`
+          ? `Later deadlines should be at least as expensive as earlier ones, from ${labels[0]} through ${labels[labels.length - 1]}.`
           : "",
     };
   }
@@ -221,7 +221,7 @@ export function computeDislocation(markets, familyType) {
       violatingPair,
       sorted,
       labels: sorted.map((m) => getQuestion(m).slice(0, 22)),
-      constraintDesc: `Σ outcomes ≈ 1.00 (current: ${sum.toFixed(2)})`,
+      constraintDesc: `All outcome prices together should total about 100%. Current total: ${(sum * 100).toFixed(1)}%.`,
     };
   }
 
@@ -283,7 +283,7 @@ export const SEED_ROWS = [
     severity: "—",
     rawDislocation: 0,
     severityCls: "text-muted-foreground",
-    constraint: "P($100k) ≤ P($90k) ≤ P($80k)",
+    constraint: "Higher BTC targets should get cheaper as the threshold rises.",
     status: "Normal",
     statusCls: "",
     markets: [],
@@ -297,7 +297,7 @@ export const SEED_ROWS = [
     severity: "—",
     rawDislocation: 0,
     severityCls: "text-muted-foreground",
-    constraint: "P(by Jul) ≥ P(by Jun) ≥ P(by May)",
+    constraint: "Later deadlines should be at least as expensive as earlier ones.",
     status: "Normal",
     statusCls: "",
     markets: [],
