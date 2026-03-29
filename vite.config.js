@@ -4,13 +4,15 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-plugins: [tailwindcss(), react()],
+  plugins: [tailwindcss(), react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
   server: {
+    port: 5173,
+    strictPort: true,
     proxy: {
       "/api/gamma": {
         target: "https://gamma-api.polymarket.com",

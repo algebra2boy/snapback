@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=VT323&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -478,4 +479,197 @@ body {
       padding: 1.15rem 1.2rem;
     }
   }
+}
+
+html.theme-pixel {
+  color-scheme: light;
+  --font-sans: "VT323", "Courier New", monospace;
+  --background: #f5efdf;
+  --foreground: #2f2619;
+  --card: rgba(255, 248, 235, 0.94);
+  --card-foreground: #2f2619;
+  --popover: #fff8ea;
+  --popover-foreground: #2f2619;
+  --primary: #4966d1;
+  --primary-foreground: #ffffff;
+  --secondary: #f1e7d0;
+  --secondary-foreground: #2f2619;
+  --muted: #f7f0df;
+  --muted-foreground: #7a684b;
+  --accent: #d19d45;
+  --accent-foreground: #2f2619;
+  --destructive: #d97849;
+  --border: rgba(123, 111, 84, 0.16);
+  --input: rgba(255, 248, 235, 0.94);
+  --ring: rgba(73, 102, 209, 0.18);
+}
+
+html.theme-pixel body {
+  background:
+    radial-gradient(circle at 18% 15%, rgba(255, 214, 120, 0.28), transparent 22%),
+    radial-gradient(circle at 82% 18%, rgba(123, 174, 255, 0.18), transparent 24%),
+    linear-gradient(rgba(123, 111, 84, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(123, 111, 84, 0.04) 1px, transparent 1px),
+    linear-gradient(180deg, #f9f3e5 0%, #f4ecda 100%);
+  background-size: auto, auto, 24px 24px, 24px 24px, auto;
+  color: #2f2619;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+
+html.theme-pixel .pixel-font,
+html.theme-pixel .pixel-kicker {
+  font-family: "Silkscreen", "Courier New", monospace !important;
+}
+
+html.theme-pixel .pixel-font {
+  letter-spacing: 0.025em;
+}
+
+html.theme-pixel .pixel-kicker {
+  font-size: 0.805rem !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+}
+
+html.theme-pixel .text-\[10px\] {
+  font-size: 12px !important;
+}
+
+html.theme-pixel .text-\[11px\] {
+  font-size: 13px !important;
+}
+
+html.theme-pixel .text-xs {
+  font-size: 0.875rem !important;
+}
+
+html.theme-pixel .text-sm {
+  font-size: 1rem !important;
+}
+
+html.theme-pixel .text-base {
+  font-size: 1.125rem !important;
+}
+
+html.theme-pixel .text-lg {
+  font-size: 1.25rem !important;
+}
+
+html.theme-pixel .text-2xl {
+  font-size: 1.75rem !important;
+}
+
+html.theme-pixel .text-4xl {
+  font-size: 2.5rem !important;
+}
+
+html.theme-pixel header {
+  background: rgba(250, 243, 229, 0.9) !important;
+  border-bottom: 1px solid rgba(123, 111, 84, 0.12) !important;
+}
+
+html.theme-pixel .freshness-badge {
+  background: rgba(255, 249, 237, 0.96) !important;
+  border-color: rgba(123, 111, 84, 0.14) !important;
+}
+
+html.theme-pixel .freshness-badge-live {
+  color: #4e9656 !important;
+}
+
+html.theme-pixel .freshness-badge-cached {
+  color: #c58d2f !important;
+}
+
+html.theme-pixel .freshness-badge-seed {
+  color: #c96c48 !important;
+}
+
+html.theme-pixel .glass-panel {
+  background: linear-gradient(180deg, rgba(255, 249, 237, 0.96) 0%, rgba(248, 240, 224, 0.98) 100%) !important;
+  border-color: rgba(123, 111, 84, 0.14) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 14px 30px rgba(150, 118, 63, 0.08) !important;
+}
+
+html.theme-pixel .scanner-item:hover {
+  background: rgba(238, 245, 255, 0.9) !important;
+  border-color: rgba(73, 102, 209, 0.14) !important;
+}
+
+html.theme-pixel .scanner-item-active {
+  background: rgba(237, 246, 230, 0.96) !important;
+  border: 1px solid rgba(86, 153, 92, 0.18) !important;
+}
+
+html.theme-pixel .scanner-item-active::before {
+  background: #4e9656 !important;
+}
+
+html.theme-pixel .scanner-search,
+html.theme-pixel .scanner-search-panel {
+  background: rgba(255, 250, 239, 0.96) !important;
+  border: 1px solid rgba(123, 111, 84, 0.14) !important;
+}
+
+html.theme-pixel .scanner-search:focus-within {
+  border-color: rgba(73, 102, 209, 0.2) !important;
+  box-shadow: 0 0 0 2px rgba(73, 102, 209, 0.08) !important;
+  background: rgba(255, 252, 244, 0.98) !important;
+}
+
+html.theme-pixel .scanner-search-input {
+  color: #2f2619 !important;
+  font-size: 1.405rem !important;
+}
+
+html.theme-pixel .scanner-search-input::placeholder {
+  color: #8d7b5d !important;
+}
+
+html.theme-pixel .scanner-filter-chip {
+  background: rgba(250, 243, 228, 0.92) !important;
+  border-color: rgba(123, 111, 84, 0.14) !important;
+  color: #6f5c42 !important;
+  font-family: "Silkscreen", "Courier New", monospace !important;
+  font-size: 0.745rem !important;
+}
+
+html.theme-pixel .scanner-filter-chip:hover {
+  background: rgba(241, 233, 213, 0.98) !important;
+  color: #2f2619 !important;
+}
+
+html.theme-pixel .scanner-filter-chip-active {
+  background: rgba(230, 242, 219, 0.98) !important;
+  border-color: rgba(86, 153, 92, 0.18) !important;
+  color: #4e9656 !important;
+}
+
+html.theme-pixel .soft-grid {
+  background-image:
+    linear-gradient(to right, rgba(123, 111, 84, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(123, 111, 84, 0.04) 1px, transparent 1px) !important;
+}
+
+html.theme-pixel .theme-primary-action {
+  border: 1px solid rgba(73, 102, 209, 0.14) !important;
+  background: linear-gradient(180deg, rgba(88, 116, 223, 0.98) 0%, rgba(73, 102, 209, 0.98) 100%) !important;
+  color: #ffffff !important;
+}
+
+html.theme-pixel .theme-primary-action:hover {
+  background: linear-gradient(180deg, rgba(98, 126, 232, 0.98) 0%, rgba(81, 111, 221, 0.98) 100%) !important;
+}
+
+html.theme-pixel .theme-secondary-action {
+  background: rgba(255, 249, 237, 0.96) !important;
+  border-color: rgba(123, 111, 84, 0.14) !important;
+  color: #2f2619 !important;
+}
+
+html.theme-pixel .theme-secondary-action:hover {
+  background: rgba(246, 237, 217, 0.98) !important;
 }

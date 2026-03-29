@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import Chart from "chart.js/auto";
-import { Info, Search, X } from "lucide-react";
+import { ChevronDown, Info, Palette, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { THEMES, useTheme } from "@/lib/ThemeContext";
 import {
   fetchFamilies,
   SEED_ROWS,
@@ -131,7 +133,7 @@ function StatCell({ label, value, valueCls, tooltip, border = true }) {
 function FreshnessBadge({ dataAge, isSeed }) {
   if (isSeed)
     return (
-      <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600">
+      <span className="freshness-badge freshness-badge-seed rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600">
         Offline · seed data
       </span>
     );
@@ -139,12 +141,12 @@ function FreshnessBadge({ dataAge, isSeed }) {
   const seconds = Math.floor((Date.now() - dataAge) / 1000);
   if (seconds < 60)
     return (
-      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">
+      <span className="freshness-badge freshness-badge-live rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">
         Live · {seconds}s ago
       </span>
     );
   return (
-    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">
+    <span className="freshness-badge freshness-badge-cached rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">
       Cached · {Math.floor(seconds / 60)}m ago
     </span>
   );
@@ -371,9 +373,7 @@ function ReplayModal({ open, onClose, spreadSeries, heroFamily }) {
                               <td className="px-4 py-2.5 tabular-nums text-slate-700">
                                 {ep.durationDays.toFixed(1)}d
                                 {ep.timedOut && (
-                                  <span className="ml-1 text-amber-500">
-                                    ⏱
-                                  </span>
+                                  <span className="ml-1 text-amber-500">⏱</span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 tabular-nums text-slate-700">
@@ -513,9 +513,7 @@ function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
                     Leg A · Buy {isMutex ? "NO" : "YES"}
                   </p>
                   <p className="mb-3 text-xs font-medium leading-snug text-slate-900">
-                    {legAMarket
-                      ? getQuestion(legAMarket).slice(0, 60)
-                      : "—"}
+                    {legAMarket ? getQuestion(legAMarket).slice(0, 60) : "—"}
                   </p>
                   {[
                     ["Price", `$${spreadCalc.priceA.toFixed(3)}`],
@@ -541,9 +539,7 @@ function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
                     Leg B · Buy NO
                   </p>
                   <p className="mb-3 text-xs font-medium leading-snug text-slate-900">
-                    {legBMarket
-                      ? getQuestion(legBMarket).slice(0, 60)
-                      : "—"}
+                    {legBMarket ? getQuestion(legBMarket).slice(0, 60) : "—"}
                   </p>
                   {[
                     ["Price", `$${spreadCalc.priceB.toFixed(3)}`],
@@ -594,7 +590,9 @@ function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
                   ].map(([label, val, cls]) => (
                     <div key={label} className="flex justify-between text-sm">
                       <span className="text-muted-foreground">{label}</span>
-                      <span className={`font-medium ${cls || "text-slate-900"}`}>
+                      <span
+                        className={`font-medium ${cls || "text-slate-900"}`}
+                      >
                         {val}
                       </span>
                     </div>
@@ -678,7 +676,9 @@ function GlossaryModal({ open, onClose }) {
           {GLOSSARY.map(({ term, def }) => (
             <div key={term}>
               <p className="text-xs font-semibold text-slate-900">{term}</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{def}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {def}
+              </p>
             </div>
           ))}
         </div>
@@ -752,8 +752,111 @@ function buildViolationAlert(family) {
   };
 }
 
+const THEME_OPTIONS = [
+  { value: THEMES.default, label: "Default" },
+  { value: THEMES.pixel, label: "Pixel" },
+];
+
+function ThemeDropdown({ theme, setTheme }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleOutside(event) {
+      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  const isPixel = theme === THEMES.pixel;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((current) => !current)}
+        className="flex items-center gap-1.5 rounded-md border border-border/60 bg-card px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+        style={
+          isPixel
+            ? {
+                borderColor: "rgba(123, 111, 84, 0.16)",
+                color: "#2f2619",
+                background: "rgba(255, 250, 239, 0.96)",
+                boxShadow: "none",
+                fontFamily: "'Silkscreen', monospace",
+                fontSize: "14px",
+                lineHeight: 1,
+              }
+            : {}
+        }
+      >
+        <Palette className="h-3 w-3 shrink-0" />
+        <span>Themes</span>
+        <ChevronDown
+          className={`h-3 w-3 shrink-0 transition-transform duration-150${open ? " rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-md border border-border bg-popover py-1 shadow-lg"
+          style={
+            isPixel
+              ? {
+                  borderRadius: "8px",
+                  border: "1px solid rgba(123, 111, 84, 0.14)",
+                  background: "rgba(255, 249, 236, 0.98)",
+                  boxShadow: "0 18px 36px rgba(115, 89, 44, 0.12)",
+                }
+              : {}
+          }
+        >
+          {THEME_OPTIONS.map((option) => {
+            const active = theme === option.value;
+            return (
+              <button
+                key={option.value}
+                onClick={() => {
+                  setTheme(option.value);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground transition-colors hover:bg-muted"
+                style={
+                  isPixel
+                    ? {
+                        fontFamily: "'Silkscreen', monospace",
+                        fontSize: "14px",
+                        lineHeight: 1,
+                        color: active ? "#4966d1" : "#2f2619",
+                      }
+                    : {}
+                }
+              >
+                <span className="flex-1">{option.label}</span>
+                {active && (
+                  <span
+                    style={
+                      isPixel
+                        ? { color: "#4966d1" }
+                        : { color: "var(--primary)" }
+                    }
+                  >
+                    ✓
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main terminal ─────────────────────────────────────────────────────────────
 export default function PolymarketRelativeValueTerminal() {
+  const { user, logout } = useAuth0();
+  const { theme, setTheme } = useTheme();
+  const isPixel = theme === THEMES.pixel;
   const strikeChartRef = useRef(null);
   const pnlChartRef = useRef(null);
   const historyChartRef = useRef(null);
@@ -950,8 +1053,29 @@ export default function PolymarketRelativeValueTerminal() {
 
   // ── Init charts once ──
   useEffect(() => {
-    const grid = "rgba(148,163,184,0.18)";
-    const txt = "rgba(71,85,105,0.92)";
+    const grid = isPixel
+      ? "rgba(121, 105, 74, 0.16)"
+      : "rgba(148,163,184,0.18)";
+    const txt = isPixel ? "#6d5c43" : "rgba(71,85,105,0.92)";
+    const tooltipBg = isPixel ? "rgba(255, 249, 236, 0.98)" : "#ffffff";
+    const tooltipTitle = isPixel ? "#2f2619" : "#111827";
+    const tooltipBody = isPixel ? "#6d5c43" : "rgba(15,23,42,0.72)";
+    const tooltipBorder = isPixel
+      ? "rgba(123, 111, 84, 0.16)"
+      : "rgba(15,23,42,0.1)";
+    const envelopeBorder = isPixel
+      ? "rgba(86, 153, 92, 0.38)"
+      : "rgba(31,158,117,0.25)";
+    const envelopeFill = isPixel
+      ? "rgba(86, 153, 92, 0.12)"
+      : "rgba(31,158,117,0.05)";
+    const marketColor = isPixel ? "#4f78df" : "#378ADD";
+    const violationColor = isPixel ? "#d97849" : "#FF5000";
+    const pnlColor = isPixel ? "#56995c" : "#00C805";
+    const pnlFill = isPixel
+      ? "rgba(86, 153, 92, 0.14)"
+      : "rgba(0,200,5,0.08)";
+    const historyAltColor = isPixel ? "#d19d45" : "#FF5000";
 
     strikeChart.current?.destroy();
     pnlChart.current?.destroy();
@@ -965,8 +1089,8 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "No-arbitrage ceiling",
             data: [],
-            borderColor: "rgba(31,158,117,0.25)",
-            backgroundColor: "rgba(31,158,117,0.05)",
+            borderColor: envelopeBorder,
+            backgroundColor: envelopeFill,
             fill: true,
             borderWidth: 1,
             borderDash: [4, 4],
@@ -976,8 +1100,8 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "Market prices",
             data: [],
-            borderColor: "#378ADD",
-            backgroundColor: "#378ADD",
+            borderColor: marketColor,
+            backgroundColor: marketColor,
             borderWidth: 2,
             pointRadius: 6,
             pointBackgroundColor: [],
@@ -993,10 +1117,10 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: "#ffffff",
-            titleColor: "#111827",
-            bodyColor: "rgba(15,23,42,0.72)",
-            borderColor: "rgba(15,23,42,0.1)",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
             callbacks: {
               label: (ctx) =>
@@ -1046,8 +1170,8 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "Net P&L after fees",
             data: PNL_DATA,
-            borderColor: "#00C805",
-            backgroundColor: "rgba(0,200,5,0.08)",
+            borderColor: pnlColor,
+            backgroundColor: pnlFill,
             fill: true,
             borderWidth: 2,
             pointRadius: 0,
@@ -1056,7 +1180,7 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "Break-even",
             data: REPAIR_PCTS.map(() => 0),
-            borderColor: "#FF5000",
+            borderColor: historyAltColor,
             borderWidth: 1,
             borderDash: [6, 4],
             pointRadius: 0,
@@ -1070,10 +1194,10 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: "#ffffff",
-            titleColor: "#111827",
-            bodyColor: "rgba(15,23,42,0.72)",
-            borderColor: "rgba(15,23,42,0.1)",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
           },
         },
@@ -1111,10 +1235,10 @@ export default function PolymarketRelativeValueTerminal() {
             },
           },
           tooltip: {
-            backgroundColor: "#ffffff",
-            titleColor: "#111827",
-            bodyColor: "rgba(15,23,42,0.72)",
-            borderColor: "rgba(15,23,42,0.1)",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
             callbacks: {
               label: (ctx) =>
@@ -1157,7 +1281,7 @@ export default function PolymarketRelativeValueTerminal() {
       pnlChart.current?.destroy();
       historyChart.current?.destroy();
     };
-  }, []);
+  }, [isPixel]);
 
   // ── Reset chart point limit when hero family changes ──
   useEffect(() => {
@@ -1212,8 +1336,10 @@ export default function PolymarketRelativeValueTerminal() {
     const prices = visibleIndices.map((i) => allPrices[i]);
     const envelope = visibleIndices.map((i) => allEnvelope[i]);
     const rawLabels = visibleIndices.map((i) => allLabels[i]);
+    const marketColor = isPixel ? "#4f78df" : "#378ADD";
+    const violationColor = isPixel ? "#d97849" : "#FF5000";
     const colors = prices.map((p, i) =>
-      p > envelope[i] ? "#FF5000" : "#378ADD",
+      p > envelope[i] ? violationColor : marketColor,
     );
 
     const c = strikeChart.current;
@@ -1230,7 +1356,7 @@ export default function PolymarketRelativeValueTerminal() {
     c.options.scales.x.ticks.maxTicksLimit =
       heroFamily.type === "Mutex set" ? 8 : 12;
     c.update();
-  }, [heroFamily, chartPointLimit]);
+  }, [heroFamily, chartPointLimit, isPixel]);
 
   // ── Update history chart on clobHistory change ──
   useEffect(() => {
@@ -1256,8 +1382,10 @@ export default function PolymarketRelativeValueTerminal() {
       {
         label: labelA,
         data: seriesA.map((pt) => pt.p),
-        borderColor: "#378ADD",
-        backgroundColor: "rgba(55,138,221,0.06)",
+        borderColor: isPixel ? "#4f78df" : "#378ADD",
+        backgroundColor: isPixel
+          ? "rgba(79, 120, 223, 0.08)"
+          : "rgba(55,138,221,0.06)",
         fill: false,
         borderWidth: 2,
         pointRadius: 0,
@@ -1266,8 +1394,10 @@ export default function PolymarketRelativeValueTerminal() {
       {
         label: labelB,
         data: seriesA.map((pt) => bByTime.get(pt.t) ?? null),
-        borderColor: "#FF5000",
-        backgroundColor: "rgba(255,80,0,0.06)",
+        borderColor: isPixel ? "#d19d45" : "#FF5000",
+        backgroundColor: isPixel
+          ? "rgba(209, 157, 69, 0.08)"
+          : "rgba(255,80,0,0.06)",
         fill: false,
         borderWidth: 2,
         pointRadius: 0,
@@ -1276,7 +1406,7 @@ export default function PolymarketRelativeValueTerminal() {
       },
     ];
     c.update();
-  }, [clobHistory]);
+  }, [clobHistory, isPixel]);
 
   // ── Update P&L chart when live book data arrives ──
   useEffect(() => {
@@ -1485,7 +1615,10 @@ export default function PolymarketRelativeValueTerminal() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <GlossaryModal open={glossaryOpen} onClose={() => setGlossaryOpen(false)} />
+      <GlossaryModal
+        open={glossaryOpen}
+        onClose={() => setGlossaryOpen(false)}
+      />
       <SpreadOrderModal
         open={orderModalOpen}
         onClose={() => setOrderModalOpen(false)}
@@ -1563,6 +1696,35 @@ export default function PolymarketRelativeValueTerminal() {
                 Fetching…
               </span>
             )}
+            <ThemeDropdown theme={theme} setTheme={setTheme} />
+            {/* ── User avatar + logout ── */}
+            <div className="flex items-center gap-2 border-l border-border/60 pl-3">
+              {user?.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name ?? "User avatar"}
+                  className="h-7 w-7 rounded-full ring-1 ring-slate-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-600">
+                  {user?.name?.[0]?.toUpperCase() ?? "U"}
+                </div>
+              )}
+              <div className="hidden flex-col md:flex">
+                <span className="text-[11px] font-medium leading-tight text-slate-700 max-w-[120px] truncate">
+                  {user?.name ?? user?.email ?? "Signed in"}
+                </span>
+              </div>
+              <button
+                onClick={() =>
+                  logout({ logoutParams: { returnTo: window.location.origin } })
+                }
+                className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+                title="Sign out"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
         </div>
       </header>
