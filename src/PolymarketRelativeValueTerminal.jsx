@@ -779,6 +779,8 @@ export default function PolymarketRelativeValueTerminal() {
   const [analyticsData, setAnalyticsData] = useState(null); // { sigma, backtest }
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [chartPointLimit, setChartPointLimit] = useState("all"); // "all" | number
+  const [scannerPage, setScannerPage] = useState(1);
+  const [pageJumpValue, setPageJumpValue] = useState("1");
 
   // ── Fetch Gamma families ──
   useEffect(() => {
