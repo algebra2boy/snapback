@@ -182,10 +182,27 @@ function buildViolationAlert(family) {
   const { violatingPair, rawDislocation } = family.dislocation;
   if (!violatingPair || rawDislocation <= 0) return null;
 
+  const gap = (rawDislocation * 100).toFixed(1);
+
+  // ── Mutex set: violation is Σ YES > 1.00, not an ordering inversion ──
+  if (family.type === "Mutex set") {
+    const sum = family.dislocation.sum ?? 0;
+    const [topLeg, secondLeg] = violatingPair;
+    const topLabel = simplifyMarketLabel(getQuestion(topLeg));
+    const secondLabel = simplifyMarketLabel(getQuestion(secondLeg));
+    const topPrice = (topLeg.yesPrice * 100).toFixed(1);
+    const secondPrice = (secondLeg.yesPrice * 100).toFixed(1);
+    return {
+      eyebrow: `${gap} pt sum overrun`,
+      summary: `Outcomes sum to ${(sum * 100).toFixed(1)}¢ — ${gap} pts above the 100¢ ceiling.`,
+      detail: `Top two: ${topLabel} at ${topPrice}¢, ${secondLabel} at ${secondPrice}¢. Buy NO on the most overpriced outcomes to capture the gap.`,
+    };
+  }
+
+  // ── Strike ladder / Expiry curve: ordering inversion ──
   const [lowerLeg, upperLeg] = violatingPair;
   const upperPrice = (upperLeg.yesPrice * 100).toFixed(1);
   const lowerPrice = (lowerLeg.yesPrice * 100).toFixed(1);
-  const gap = (rawDislocation * 100).toFixed(1);
   const upperLabel = simplifyMarketLabel(getQuestion(upperLeg));
   const lowerLabel = simplifyMarketLabel(getQuestion(lowerLeg));
 
@@ -622,7 +639,8 @@ export default function PolymarketRelativeValueTerminal() {
 
     // Determine which indices to show
     let visibleIndices;
-    const limit = chartPointLimit === "all" ? allPrices.length : chartPointLimit;
+    const limit =
+      chartPointLimit === "all" ? allPrices.length : chartPointLimit;
 
     if (limit >= allPrices.length) {
       visibleIndices = allPrices.map((_, i) => i);
@@ -797,16 +815,21 @@ export default function PolymarketRelativeValueTerminal() {
     if (!heroFamily?.markets?.length) return [];
     const allPrices = heroFamily.markets.map((m) => m.yesPrice * 100);
     const allEnvelope = computeNoArbEnvelope(allPrices);
-    const limit = chartPointLimit === "all" ? allPrices.length : chartPointLimit;
+    const limit =
+      chartPointLimit === "all" ? allPrices.length : chartPointLimit;
     if (limit >= allPrices.length) return allPrices.map((_, i) => i);
     const keep = new Set([0, allPrices.length - 1]);
-    allPrices.forEach((p, i) => { if (p > allEnvelope[i]) keep.add(i); });
+    allPrices.forEach((p, i) => {
+      if (p > allEnvelope[i]) keep.add(i);
+    });
     const remaining = limit - keep.size;
     if (remaining > 0) {
       const cands = [];
-      for (let i = 0; i < allPrices.length; i++) if (!keep.has(i)) cands.push(i);
+      for (let i = 0; i < allPrices.length; i++)
+        if (!keep.has(i)) cands.push(i);
       const step = cands.length / remaining;
-      for (let j = 0; j < remaining && j < cands.length; j++) keep.add(cands[Math.round(j * step)]);
+      for (let j = 0; j < remaining && j < cands.length; j++)
+        keep.add(cands[Math.round(j * step)]);
     }
     return [...keep].sort((a, b) => a - b).slice(0, limit);
   })();
@@ -826,9 +849,7 @@ export default function PolymarketRelativeValueTerminal() {
   const strikeAxisLabels = chartVisibleIndices.map((i) => {
     const market = heroFamily.markets[i];
     const fullLabel =
-      getQuestion(market) ||
-      heroFamily?.labels?.[i] ||
-      `Market ${i + 1}`;
+      getQuestion(market) || heroFamily?.labels?.[i] || `Market ${i + 1}`;
     const shortLabel = heroFamily?.labels?.[i] || fullLabel;
     return {
       full: fullLabel,
@@ -940,26 +961,33 @@ export default function PolymarketRelativeValueTerminal() {
                 </span>
               </div>
               <p className="hidden text-xs text-muted-foreground md:block leading-tight">
-                Scan structurally linked markets, inspect violations, price spreads
+                Scan structurally linked markets, inspect violations, price
+                spreads
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden items-center gap-6 text-sm md:flex">
               <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2">
-                <span className="text-xs font-medium text-muted-foreground">Families</span>
+                <span className="text-xs font-medium text-muted-foreground">
+                  Families
+                </span>
                 <span className="font-semibold text-slate-900">
                   {loading ? "—" : scannerRows.length}
                 </span>
               </div>
               <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2">
-                <span className="text-xs font-medium text-muted-foreground">Dislocations</span>
+                <span className="text-xs font-medium text-muted-foreground">
+                  Dislocations
+                </span>
                 <span className="font-semibold text-slate-900">
                   {loading ? "—" : dislocatedCount}
                 </span>
               </div>
               <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2">
-                <span className="text-xs font-medium text-muted-foreground">Actionable</span>
+                <span className="text-xs font-medium text-muted-foreground">
+                  Actionable
+                </span>
                 <span
                   className={`font-semibold ${actionableCount > 0 ? "text-emerald-700" : "text-slate-900"}`}
                 >
@@ -1044,7 +1072,9 @@ export default function PolymarketRelativeValueTerminal() {
             </div>
             <div className="space-y-2.5">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">Status</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
+                  Status
+                </p>
                 <div className="flex flex-wrap gap-1.5">
                   {STATUS_FILTERS.map((option) => (
                     <button
@@ -1059,7 +1089,9 @@ export default function PolymarketRelativeValueTerminal() {
                 </div>
               </div>
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">Type</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
+                  Type
+                </p>
                 <div className="flex flex-wrap gap-1.5">
                   {TYPE_FILTERS.map((option) => (
                     <button
@@ -1083,9 +1115,7 @@ export default function PolymarketRelativeValueTerminal() {
             <div className="scanner-pagination mt-3">
               <button
                 type="button"
-                onClick={() =>
-                  setScannerPage((page) => Math.max(1, page - 1))
-                }
+                onClick={() => setScannerPage((page) => Math.max(1, page - 1))}
                 disabled={activeScannerPage === 1}
                 className="scanner-pagination-button"
               >
@@ -1121,7 +1151,9 @@ export default function PolymarketRelativeValueTerminal() {
               <button
                 type="button"
                 onClick={() =>
-                  setScannerPage((page) => Math.min(totalScannerPages, page + 1))
+                  setScannerPage((page) =>
+                    Math.min(totalScannerPages, page + 1),
+                  )
                 }
                 disabled={activeScannerPage === totalScannerPages}
                 className="scanner-pagination-button"
@@ -1148,110 +1180,112 @@ export default function PolymarketRelativeValueTerminal() {
               </div>
             ) : null}
           </div>
-          <div className="sidebar-scroll flex-1 space-y-2 overflow-y-auto p-3">
-            {pagedRows.length ? (
-              pagedRows.map((row) => (
-                <button
-                  key={row.family}
-                  onClick={() => !row.isSeed && setHeroFamily(row)}
-                  className={`fade-in scanner-item w-full text-left px-4 py-3.5 rounded-lg transition-all ${
-                    heroFamily?.family === row.family
-                      ? "scanner-item-active bg-blue-50 border border-blue-200"
-                      : "hover:bg-slate-50 border border-transparent"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="text-sm font-semibold leading-snug text-slate-900">
-                      {row.family}
-                    </span>
-                    <span
-                      className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
-                      title="Price deviation in percentage points"
-                    >
-                      {row.severity.replace("pp", " pts")}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span
-                      className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
-                      title={
-                        row.type === "Strike ladder"
-                          ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
-                          : row.type === "Expiry curve"
-                            ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones"
-                            : "Mutually exclusive outcomes — their probabilities must sum to ~100%"
-                      }
-                    >
-                      {row.type}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-1 text-[10px] font-medium ${
-                        row.status === "Actionable"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : row.status === "Watchlist"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-500"
-                      }`}
-                      title={
-                        row.status === "Actionable"
-                          ? "Gap is 4 points or more — likely profitable after costs"
-                          : row.status === "Watchlist"
-                            ? "Gap is between 2 and 4 points — notable, but may not clear transaction costs yet"
-                            : "Gap is under 2 points — within normal noise, no trade"
-                      }
-                    >
-                      {row.status}
-                    </span>
-                  </div>
-                </button>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
-                <p>No families match these filters.</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setStatusFilter("all");
-                    setTypeFilter("all");
-                  }}
-                  className="mt-2 font-medium text-blue-600 transition hover:text-blue-700"
-                >
-                  Clear filters
-                </button>
-              </div>
-            )}
-          </div>
-          {/* ── Glossary (collapsible) ── */}
-          <div className="border-t border-border/80">
-            <button
-              type="button"
-              onClick={() => setGlossaryOpen(!glossaryOpen)}
-              className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 transition"
-            >
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Glossary
-              </p>
-              <span className={`text-xs transition ${glossaryOpen ? "rotate-180" : ""}`}>
-                ▼
-              </span>
-            </button>
-            {glossaryOpen && (
-              <div className="px-5 py-3 bg-gradient-to-b from-white/0 to-white/30 space-y-2 border-t border-border/40">
-                <dl className="space-y-2.5">
-                  {GLOSSARY.map(({ term, def }) => (
-                    <div key={term} className="text-[10px]">
-                      <dt className="font-semibold text-slate-700">
-                        {term}
-                      </dt>
-                      <dd className="leading-relaxed text-muted-foreground mt-0.5">
-                        {def}
-                      </dd>
+          <div className="sidebar-scroll flex-1 overflow-y-auto">
+            <div className="space-y-2 p-3">
+              {pagedRows.length ? (
+                pagedRows.map((row) => (
+                  <button
+                    key={row.family}
+                    onClick={() => !row.isSeed && setHeroFamily(row)}
+                    className={`fade-in scanner-item w-full text-left px-4 py-3.5 rounded-lg transition-all ${
+                      heroFamily?.family === row.family
+                        ? "scanner-item-active bg-blue-50 border border-blue-200"
+                        : "hover:bg-slate-50 border border-transparent"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-sm font-semibold leading-snug text-slate-900">
+                        {row.family}
+                      </span>
+                      <span
+                        className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
+                        title="Price deviation in percentage points"
+                      >
+                        {row.severity.replace("pp", " pts")}
+                      </span>
                     </div>
-                  ))}
-                </dl>
-              </div>
-            )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
+                        title={
+                          row.type === "Strike ladder"
+                            ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
+                            : row.type === "Expiry curve"
+                              ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones"
+                              : "Mutually exclusive outcomes — their probabilities must sum to ~100%"
+                        }
+                      >
+                        {row.type}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-1 text-[10px] font-medium ${
+                          row.status === "Actionable"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : row.status === "Watchlist"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-slate-100 text-slate-500"
+                        }`}
+                        title={
+                          row.status === "Actionable"
+                            ? "Gap is 4 points or more — likely profitable after costs"
+                            : row.status === "Watchlist"
+                              ? "Gap is between 2 and 4 points — notable, but may not clear transaction costs yet"
+                              : "Gap is under 2 points — within normal noise, no trade"
+                        }
+                      >
+                        {row.status}
+                      </span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
+                  <p>No families match these filters.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setStatusFilter("all");
+                      setTypeFilter("all");
+                    }}
+                    className="mt-2 font-medium text-blue-600 transition hover:text-blue-700"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* ── Glossary (collapsible) ── */}
+            <div className="border-t border-border/80">
+              <button
+                type="button"
+                onClick={() => setGlossaryOpen(!glossaryOpen)}
+                className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 transition"
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Glossary
+                </p>
+                <span
+                  className={`text-xs transition ${glossaryOpen ? "rotate-180" : ""}`}
+                >
+                  ▼
+                </span>
+              </button>
+              {glossaryOpen && (
+                <div className="px-5 pb-5 pt-3 border-t border-border/40">
+                  <dl className="space-y-2.5">
+                    {GLOSSARY.map(({ term, def }) => (
+                      <div key={term} className="text-[10px]">
+                        <dt className="font-semibold text-slate-700">{term}</dt>
+                        <dd className="leading-relaxed text-muted-foreground mt-0.5">
+                          {def}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
+            </div>
           </div>
         </aside>
 
@@ -1316,9 +1350,7 @@ export default function PolymarketRelativeValueTerminal() {
                   </p>
                   {!sigmaLabel && heroFamily && (
                     <p className="text-[10px] text-muted-foreground mt-1">
-                      {analyticsLoading
-                        ? "Computing sigma…"
-                        : "sigma pending"}
+                      {analyticsLoading ? "Computing sigma…" : "sigma pending"}
                     </p>
                   )}
                   <p className="mt-2 text-sm font-semibold text-slate-900">
@@ -1334,7 +1366,7 @@ export default function PolymarketRelativeValueTerminal() {
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Price surface
                   </span>
-                  {totalMarketCount > 12 && (
+                  {chartLimitOptions.length > 1 && (
                     <div className="flex items-center gap-2">
                       {chartPointLimit !== "all" && (
                         <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">
@@ -1353,7 +1385,9 @@ export default function PolymarketRelativeValueTerminal() {
                                 : "border-slate-200/80 bg-white/60 text-slate-500 hover:border-slate-300 hover:bg-white hover:text-slate-700"
                             }`}
                           >
-                            {opt === "all" ? `All ${totalMarketCount}` : `${opt}`}
+                            {opt === "all"
+                              ? `All ${totalMarketCount}`
+                              : `${opt}`}
                           </button>
                         ))}
                       </div>
@@ -1386,11 +1420,15 @@ export default function PolymarketRelativeValueTerminal() {
               <div className="mt-5 flex flex-wrap gap-5 text-xs text-muted-foreground">
                 <span className="flex items-center gap-2">
                   <span className="size-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/40" />
-                  <span className="font-medium text-slate-700">No-arbitrage ceiling</span>
+                  <span className="font-medium text-slate-700">
+                    No-arbitrage ceiling
+                  </span>
                 </span>
                 <span className="flex items-center gap-2">
                   <span className="size-2.5 rounded-full bg-[#378ADD]" />
-                  <span className="font-medium text-slate-700">Market price</span>
+                  <span className="font-medium text-slate-700">
+                    Market price
+                  </span>
                 </span>
                 <span className="flex items-center gap-2">
                   <span className="size-2.5 rounded-full bg-[#FF5000]" />
@@ -1404,8 +1442,12 @@ export default function PolymarketRelativeValueTerminal() {
           <section className="fade-in px-8 py-6 border-b border-border">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Price history</p>
-                <p className="text-sm font-semibold mt-1">Market spread over time</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Price history
+                </p>
+                <p className="text-sm font-semibold mt-1">
+                  Market spread over time
+                </p>
               </div>
               {clobLoading && (
                 <span className="text-xs text-muted-foreground">
@@ -1493,7 +1535,8 @@ export default function PolymarketRelativeValueTerminal() {
                     Corrective spread
                   </h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Direction is structurally implied. The UI stays explicit about what is live versus what is still proxy data.
+                    Direction is structurally implied. The UI stays explicit
+                    about what is live versus what is still proxy data.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1527,13 +1570,24 @@ export default function PolymarketRelativeValueTerminal() {
                         : "Leg A · Buy YES"}
                     </p>
                   </div>
-                  <p className="mb-4 text-base font-semibold leading-snug text-slate-950">
-                    {heroFamily?.dislocation?.violatingPair
-                      ? getQuestion(
-                          heroFamily.dislocation.violatingPair[0],
-                        ).slice(0, 50)
-                      : "BTC above $90k"}
-                  </p>
+                  {(() => {
+                    const fullA = heroFamily?.dislocation?.violatingPair
+                      ? getQuestion(heroFamily.dislocation.violatingPair[0])
+                      : "BTC above $90k";
+                    const isTruncatedA = fullA.length > 50;
+                    return (
+                      <div className="group relative mb-4">
+                        <p className="text-base font-semibold leading-snug text-slate-950 cursor-default">
+                          {isTruncatedA ? `${fullA.slice(0, 50)}…` : fullA}
+                        </p>
+                        {isTruncatedA && (
+                          <div className="pointer-events-none absolute top-full left-0 z-50 mt-2 w-80 rounded-xl border border-border/80 bg-white px-3 py-2.5 text-[12px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.13)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                            {fullA}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="space-y-2.5 text-sm">
                     {[
                       [
@@ -1571,7 +1625,9 @@ export default function PolymarketRelativeValueTerminal() {
                         key={label}
                         className="flex items-center justify-between"
                       >
-                        <span className="text-muted-foreground text-xs font-medium">{label}</span>
+                        <span className="text-muted-foreground text-xs font-medium">
+                          {label}
+                        </span>
                         <span
                           className={`font-semibold tabular-nums ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
                         >
@@ -1589,7 +1645,9 @@ export default function PolymarketRelativeValueTerminal() {
                       </p>
                       <div className="grid grid-cols-2 gap-x-3 text-[11px]">
                         <div>
-                          <p className="mb-1 text-muted-foreground text-xs">Bids</p>
+                          <p className="mb-1 text-muted-foreground text-xs">
+                            Bids
+                          </p>
                           {bookData.legA.bids.slice(0, 3).map((b, i) => (
                             <div
                               key={i}
@@ -1605,7 +1663,9 @@ export default function PolymarketRelativeValueTerminal() {
                           ))}
                         </div>
                         <div>
-                          <p className="mb-1 text-muted-foreground text-xs">Asks</p>
+                          <p className="mb-1 text-muted-foreground text-xs">
+                            Asks
+                          </p>
                           {bookData.legA.asks.slice(0, 3).map((a, i) => (
                             <div
                               key={i}
@@ -1631,13 +1691,24 @@ export default function PolymarketRelativeValueTerminal() {
                       Leg B · Buy NO
                     </p>
                   </div>
-                  <p className="mb-4 text-base font-semibold leading-snug text-slate-950">
-                    {heroFamily?.dislocation?.violatingPair
-                      ? getQuestion(
-                          heroFamily.dislocation.violatingPair[1],
-                        ).slice(0, 50)
-                      : "BTC above $100k"}
-                  </p>
+                  {(() => {
+                    const fullB = heroFamily?.dislocation?.violatingPair
+                      ? getQuestion(heroFamily.dislocation.violatingPair[1])
+                      : "BTC above $100k";
+                    const isTruncatedB = fullB.length > 50;
+                    return (
+                      <div className="group relative mb-4">
+                        <p className="text-base font-semibold leading-snug text-slate-950 cursor-default">
+                          {isTruncatedB ? `${fullB.slice(0, 50)}…` : fullB}
+                        </p>
+                        {isTruncatedB && (
+                          <div className="pointer-events-none absolute top-full left-0 z-50 mt-2 w-80 rounded-xl border border-border/80 bg-white px-3 py-2.5 text-[12px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.13)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                            {fullB}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="space-y-2.5 text-sm">
                     {[
                       [
@@ -1664,7 +1735,9 @@ export default function PolymarketRelativeValueTerminal() {
                         key={label}
                         className="flex items-center justify-between"
                       >
-                        <span className="text-muted-foreground text-xs font-medium">{label}</span>
+                        <span className="text-muted-foreground text-xs font-medium">
+                          {label}
+                        </span>
                         <span
                           className={`font-semibold tabular-nums ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
                         >
@@ -1725,7 +1798,9 @@ export default function PolymarketRelativeValueTerminal() {
               <div>
                 <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">P&amp;L Analysis</p>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      P&amp;L Analysis
+                    </p>
                     <p className="mt-1 text-sm font-semibold text-slate-950">
                       Net P&amp;L vs. repair amount
                     </p>
@@ -1821,7 +1896,9 @@ export default function PolymarketRelativeValueTerminal() {
               <div>
                 <div className="mb-4 flex items-center justify-between gap-2 border-b border-slate-200 pb-4">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Evidence Analysis</p>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      Evidence Analysis
+                    </p>
                     <p className="mt-1 text-sm font-semibold text-slate-950">
                       PIT leave-one-out backtest
                     </p>
@@ -1929,7 +2006,12 @@ export default function PolymarketRelativeValueTerminal() {
                 })()}
                 {analyticsData?.backtest && (
                   <p className="mt-3 text-[11px] text-muted-foreground bg-slate-50 rounded-lg px-3 py-2">
-                    <span className="font-semibold">Trigger:</span> sigma reaches 2.0 or higher. <span className="font-semibold">Close:</span> sigma falls to 0.5 or lower, or the trade hits a 7-day timeout. <span className="font-semibold">Friction:</span> 2% per round-trip.
+                    <span className="font-semibold">Trigger:</span> sigma
+                    reaches 2.0 or higher.{" "}
+                    <span className="font-semibold">Close:</span> sigma falls to
+                    0.5 or lower, or the trade hits a 7-day timeout.{" "}
+                    <span className="font-semibold">Friction:</span> 2% per
+                    round-trip.
                   </p>
                 )}
               </div>
