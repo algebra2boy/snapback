@@ -11,7 +11,8 @@ import {
   getQuestion,
   getClobTokenId,
 } from "@/lib/gammaApi";
-import { fetchPriceHistory, fetchOrderBook } from "@/lib/clobApi";
+import { fetchPriceHistory, fetchOrderBook, fetch30dHistory } from "@/lib/clobApi";
+import { buildSpreadSeries, computeSigmaScore, runBacktest } from "@/lib/analytics";
 
 // ── P&L chart data (static until CLOB is wired in) ───────────────────────────
 const REPAIR_PCTS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
@@ -41,7 +42,7 @@ const GLOSSARY = [
   },
   {
     term: "Watchlist",
-    def: "Dislocation is 2–4 % pts — notable but may not clear friction costs. Worth monitoring for it to grow before trading.",
+    def: "Dislocation is 2-4 % pts — notable but may not clear friction costs. Worth monitoring for it to grow before trading.",
   },
   {
     term: "Normal",
@@ -126,6 +127,8 @@ export default function PolymarketRelativeValueTerminal() {
   const [clobHistory, setClobHistory] = useState(null); // { seriesA, seriesB, labelA, labelB }
   const [bookData, setBookData] = useState(null);       // { legA: book, legB: book }
   const [bookLoading, setBookLoading] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState(null); // { sigma, backtest }
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   // ── Fetch Gamma families ──
   useEffect(() => {
@@ -223,6 +226,39 @@ export default function PolymarketRelativeValueTerminal() {
       }
     }
     loadBook();
+    return () => { cancelled = true; };
+  }, [heroFamily]);
+
+  // ── Fetch 30d history + compute σ and backtest when hero family changes ──
+  useEffect(() => {
+    if (!heroFamily || heroFamily.isSeed || !heroFamily.dislocation?.violatingPair) {
+      setAnalyticsData(null);
+      return;
+    }
+    const [mktA, mktB] = heroFamily.dislocation.violatingPair;
+    const tokenA = getClobTokenId(mktA);
+    const tokenB = getClobTokenId(mktB);
+    if (!tokenA || !tokenB) { setAnalyticsData(null); return; }
+
+    let cancelled = false;
+    async function loadAnalytics() {
+      setAnalyticsLoading(true);
+      try {
+        const { seriesA, seriesB } = await fetch30dHistory(tokenA, tokenB);
+        if (cancelled) return;
+        const spreadSeries = buildSpreadSeries(seriesA, seriesB);
+        const sigma = computeSigmaScore(spreadSeries, heroFamily.rawDislocation);
+        const frictionFrac = 0.02; // conservative 2% proxy; Spread Builder shows live dollar friction
+        const backtest = runBacktest(spreadSeries, frictionFrac);
+        if (!cancelled) setAnalyticsData({ sigma, backtest, spreadSeries });
+      } catch (err) {
+        console.warn("Analytics unavailable:", err.message);
+        if (!cancelled) setAnalyticsData(null);
+      } finally {
+        if (!cancelled) setAnalyticsLoading(false);
+      }
+    }
+    loadAnalytics();
     return () => { cancelled = true; };
   }, [heroFamily]);
 
@@ -460,14 +496,14 @@ export default function PolymarketRelativeValueTerminal() {
     if (!pnlChart.current || !bookData || !heroFamily?.dislocation?.violatingPair) return;
     const [mktA, mktB] = heroFamily.dislocation.violatingPair;
     const TARGET = 100;
-    const priceA  = bookData.legA.topAsk ?? mktA.yesPrice;
+    const priceA = bookData.legA.topAsk ?? mktA.yesPrice;
     const sharesA = Math.round(TARGET / priceA);
     const noPrice = bookData.legB.topBid != null ? 1 - bookData.legB.topBid : 1 - mktB.yesPrice;
     const sharesB = Math.round(TARGET / noPrice);
     const frictionA = bookData.legA.spread != null ? sharesA * bookData.legA.spread / 2 : sharesA * priceA * 0.02;
     const frictionB = bookData.legB.spread != null ? sharesB * bookData.legB.spread / 2 : sharesB * noPrice * 0.02;
     const totalFriction = frictionA + frictionB;
-    const totalShares   = sharesA + sharesB;
+    const totalShares = sharesA + sharesB;
     const c = pnlChart.current;
     c.data.datasets[0].data = REPAIR_PCTS.map(r =>
       Math.round((totalShares * (r / 100) - totalFriction) * 100) / 100
@@ -484,23 +520,29 @@ export default function PolymarketRelativeValueTerminal() {
   if (bookData && heroFamily?.dislocation?.violatingPair) {
     const [mktA, mktB] = heroFamily.dislocation.violatingPair;
     const TARGET = 100;
-    const priceA  = bookData.legA.topAsk ?? mktA.yesPrice;
+    const priceA = bookData.legA.topAsk ?? mktA.yesPrice;
     const sharesA = Math.round(TARGET / priceA);
-    const costA   = sharesA * priceA;
+    const costA = sharesA * priceA;
     const maxGainA = sharesA * (1 - priceA);
     const frictionA = bookData.legA.spread != null ? sharesA * bookData.legA.spread / 2 : costA * 0.02;
     const noPrice = bookData.legB.topBid != null ? 1 - bookData.legB.topBid : 1 - mktB.yesPrice;
     const sharesB = Math.round(TARGET / noPrice);
-    const costB   = sharesB * noPrice;
+    const costB = sharesB * noPrice;
     const maxGainB = sharesB * (1 - noPrice);
     const frictionB = bookData.legB.spread != null ? sharesB * bookData.legB.spread / 2 : costB * 0.02;
-    const totalFriction    = frictionA + frictionB;
-    const netCost          = costA + costB;
-    const totalShares      = sharesA + sharesB;
+    const totalFriction = frictionA + frictionB;
+    const netCost = costA + costB;
+    const totalShares = sharesA + sharesB;
     const breakevenRepairPp = (totalFriction / totalShares) * 100;
-    const edgePp           = heroFamily.rawDislocation * 100 - breakevenRepairPp;
+    const edgePp = heroFamily.rawDislocation * 100 - breakevenRepairPp;
     spreadCalc = { priceA, sharesA, costA, maxGainA, priceB: noPrice, sharesB, costB, maxGainB, totalFriction, netCost, breakevenRepairPp, edgePp };
   }
+
+  // ── σ display label ──
+  const sigma = analyticsData?.sigma ?? null;
+  const sigmaLabel = sigma != null ? `${sigma.toFixed(2)}σ` : null;
+  const sigmaStatus = sigma == null ? null : sigma >= 2 ? "Actionable" : sigma >= 1.5 ? "Watchlist" : "Normal";
+  const sigmaCls = sigmaStatus === "Actionable" ? "text-emerald-600" : sigmaStatus === "Watchlist" ? "text-amber-600" : "text-muted-foreground";
 
   function violationText() {
     if (!heroFamily?.dislocation) return null;
@@ -589,20 +631,20 @@ export default function PolymarketRelativeValueTerminal() {
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600" title={
                     row.type === "Strike ladder" ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper" :
-                    row.type === "Expiry curve"  ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones" :
-                                                   "Mutually exclusive outcomes — their probabilities must sum to ~100%"
+                      row.type === "Expiry curve" ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones" :
+                        "Mutually exclusive outcomes — their probabilities must sum to ~100%"
                   }>
                     {row.type}
                   </span>
                   <span
                     className={`rounded-full px-2 py-1 text-[10px] font-medium ${row.status === "Actionable" ? "bg-emerald-100 text-emerald-700" :
-                        row.status === "Watchlist" ? "bg-amber-100 text-amber-700" :
-                          "bg-slate-100 text-slate-500"
+                      row.status === "Watchlist" ? "bg-amber-100 text-amber-700" :
+                        "bg-slate-100 text-slate-500"
                       }`}
                     title={
                       row.status === "Actionable" ? "Gap ≥ 4 % pts — likely profitable after costs" :
-                      row.status === "Watchlist"  ? "Gap 2–4 % pts — notable but may not clear transaction costs yet" :
-                                                    "Gap < 2 % pts — within normal noise, no trade"
+                        row.status === "Watchlist" ? "Gap 2–4 % pts — notable but may not clear transaction costs yet" :
+                          "Gap < 2 % pts — within normal noise, no trade"
                     }
                   >
                     {row.status}
@@ -652,12 +694,19 @@ export default function PolymarketRelativeValueTerminal() {
                   )}
                 </div>
                 <div className="min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Price deviation</p>
-                  <p className={`mt-2 text-4xl font-bold tracking-[-0.06em] tabular-nums ${heroFamily?.severityCls ?? ""}`}>
-                    {heroFamily ? heroFamily.severity.replace("pp", "") : "—"}
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    {sigmaLabel ? "Sigma score" : "Price deviation"}
                   </p>
-                  <p className="text-xs text-muted-foreground">percentage points</p>
-                  <p className="mt-1 text-sm font-medium">{heroFamily?.status ?? "—"}</p>
+                  <p className={`mt-2 text-4xl font-bold tracking-[-0.06em] tabular-nums ${sigmaLabel ? sigmaCls : (heroFamily?.severityCls ?? "")}`}>
+                    {sigmaLabel ?? (heroFamily ? heroFamily.severity.replace("pp", "") : "—")}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {sigmaLabel ? "standard deviations" : "percentage points"}
+                  </p>
+                  {!sigmaLabel && heroFamily && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{analyticsLoading ? "Computing σ…" : "raw gap · σ pending"}</p>
+                  )}
+                  <p className="mt-1 text-sm font-medium">{sigmaStatus ?? heroFamily?.status ?? "—"}</p>
                 </div>
               </div>
 
@@ -734,9 +783,10 @@ export default function PolymarketRelativeValueTerminal() {
               border
             />
             <StatCell
-              label="Signal strength"
-              value={heroFamily?.status ?? "—"}
-              tooltip="Actionable = gap ≥ 4 % pts, likely profitable after costs. Watchlist = 2–4 % pts, monitor for growth. Normal = < 2 % pts, within noise."
+              label={sigmaLabel ? "σ score" : "Signal strength"}
+              value={sigmaLabel ? `${sigmaLabel} · ${sigmaStatus}` : (heroFamily?.status ?? "—")}
+              valueCls={sigmaLabel ? sigmaCls : undefined}
+              tooltip="σ = how many standard deviations the gap sits above its 30-day trailing average. ≥ 2σ = Actionable, 1.5–2σ = Watchlist, < 1.5σ = Normal. Raw % pts shown until 30d history loads."
               border={false}
             />
           </div>
@@ -781,9 +831,9 @@ export default function PolymarketRelativeValueTerminal() {
                   </p>
                   <div className="space-y-2.5 text-sm">
                     {[
-                      ["Token",    spreadCalc ? `YES @ $${spreadCalc.priceA.toFixed(3)}` : heroFamily?.dislocation?.violatingPair ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}` : "YES @ $0.38"],
-                      ["Shares",   spreadCalc ? String(spreadCalc.sharesA) : "—"],
-                      ["Cost",     spreadCalc ? `$${spreadCalc.costA.toFixed(2)}` : "—"],
+                      ["Token", spreadCalc ? `YES @ $${spreadCalc.priceA.toFixed(3)}` : heroFamily?.dislocation?.violatingPair ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}` : "YES @ $0.38"],
+                      ["Shares", spreadCalc ? String(spreadCalc.sharesA) : "—"],
+                      ["Cost", spreadCalc ? `$${spreadCalc.costA.toFixed(2)}` : "—"],
                       ["Max gain", spreadCalc ? `+$${spreadCalc.maxGainA.toFixed(2)}` : "—"],
                     ].map(([label, val]) => (
                       <div key={label} className="flex items-center justify-between">
@@ -830,9 +880,9 @@ export default function PolymarketRelativeValueTerminal() {
                   </p>
                   <div className="space-y-2.5 text-sm">
                     {[
-                      ["Token",    spreadCalc ? `NO @ $${spreadCalc.priceB.toFixed(3)}` : heroFamily?.dislocation?.violatingPair ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}` : "NO @ $0.58"],
-                      ["Shares",   spreadCalc ? String(spreadCalc.sharesB) : "—"],
-                      ["Cost",     spreadCalc ? `$${spreadCalc.costB.toFixed(2)}` : "—"],
+                      ["Token", spreadCalc ? `NO @ $${spreadCalc.priceB.toFixed(3)}` : heroFamily?.dislocation?.violatingPair ? `NO @ $${(1 - heroFamily.dislocation.violatingPair[1].yesPrice).toFixed(2)}` : "NO @ $0.58"],
+                      ["Shares", spreadCalc ? String(spreadCalc.sharesB) : "—"],
+                      ["Cost", spreadCalc ? `$${spreadCalc.costB.toFixed(2)}` : "—"],
                       ["Max gain", spreadCalc ? `+$${spreadCalc.maxGainB.toFixed(2)}` : "—"],
                     ].map(([label, val]) => (
                       <div key={label} className="flex items-center justify-between">
@@ -933,38 +983,58 @@ export default function PolymarketRelativeValueTerminal() {
 
               {/* ── Evidence ── */}
               <div>
-                <div className="mb-3 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+                <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-slate-950">Evidence · PIT leave-one-out</p>
-                    <p className="mt-1 text-sm text-muted-foreground">Still a presentation placeholder until `/prices-history` powers the evidence layer.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {analyticsData?.backtest
+                        ? "Computed from 30-day daily CLOB history with point-in-time σ triggers."
+                        : analyticsLoading
+                          ? "Loading 30-day history…"
+                          : "Select a live family to compute backtest."}
+                    </p>
                   </div>
+                  {analyticsLoading && <span className="text-xs text-muted-foreground animate-pulse">Computing…</span>}
                 </div>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {[
-                    ["Episodes", "8 (high confidence)", ""],
-                    ["LOO wins", "6 / 8 (75%)", ""],
-                    ["Median P&L", "+$8.40 / $100", "text-emerald-600"],
-                    ["25th percentile", "-$4.20 / $100", "text-amber-600"],
-                    ["Worst loss", "-$18.50 / $100", "text-red-600"],
-                    ["Friction", "Base (1.0×)", ""],
-                  ].map(([label, value, cls]) => (
-                    <div key={label} className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm">
-                      <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-                      <p className={`font-medium ${cls || "text-slate-900"}`}>{value}</p>
+                {(() => {
+                  const bt = analyticsData?.backtest;
+                  const fmt = (v, prefix = "") => v == null ? "—" : `${prefix}$${Math.abs(v).toFixed(2)} / $100`;
+                  const confidence = bt?.confidence ?? null;
+                  const confLabel = confidence === "high" ? "High (≥ 10 episodes)" : confidence === "moderate" ? "Moderate (5–9)" : confidence === "low" ? "Low (< 5)" : confidence === "insufficient" ? "Insufficient data" : "—";
+                  const cells = [
+                    { label: "Episodes detected", value: bt ? String(bt.episodes) : "—", cls: "" },
+                    { label: "Confidence", value: confLabel, cls: confidence === "high" ? "text-emerald-600" : confidence === "moderate" ? "text-amber-600" : "text-muted-foreground" },
+                    { label: "LOO win rate", value: bt?.looWinRate != null ? `${bt.looWins} / ${bt.episodes} (${(bt.looWinRate * 100).toFixed(0)}%)` : "—", cls: bt?.looWinRate >= 0.6 ? "text-emerald-600" : "text-amber-600" },
+                    { label: "Median P&L", value: fmt(bt?.medianPnl, bt?.medianPnl >= 0 ? "+" : "-"), cls: bt?.medianPnl >= 0 ? "text-emerald-600" : "text-red-600" },
+                    { label: "25th percentile", value: fmt(bt?.p25Pnl, bt?.p25Pnl >= 0 ? "+" : "-"), cls: bt?.p25Pnl >= 0 ? "text-emerald-600" : "text-amber-600" },
+                    { label: "Worst loss", value: fmt(bt?.worstLoss, bt?.worstLoss >= 0 ? "+" : "-"), cls: bt?.worstLoss >= 0 ? "text-emerald-600" : "text-red-600" },
+                  ];
+                  return (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {cells.map(({ label, value, cls }) => (
+                        <div key={label} className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm">
+                          <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+                          <p className={`font-medium ${cls || "text-slate-900"}`}>{value}</p>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  Episode history requires CLOB /prices-history integration (Phase 2).
-                </p>
+                  );
+                })()}
+                {analyticsData?.backtest && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Trigger: σ ≥ 2 (point-in-time). Close: σ ≤ 0.5 or 7-day timeout. Friction: 2% per round-trip.
+                  </p>
+                )}
               </div>
 
               {/* ── Model risk ── */}
               <Alert className="border-amber-200 bg-amber-50">
                 <AlertDescription className="text-sm leading-6 text-amber-800">
-                  {spreadCalc
-                    ? "Sizing and friction computed from live CLOB top-of-book. σ normalization and PIT backtest still require CLOB history integration (Phase 2)."
-                    : "Friction is a conservative proxy. Depth and σ normalization are not yet live-computed, so the UI keeps those areas framed as incomplete evidence rather than definitive analytics."}
+                  {analyticsData
+                    ? "σ score and backtest computed from live 30-day CLOB history. Small episode counts mean wide confidence intervals — treat evidence bands as directional, not precise."
+                    : spreadCalc
+                      ? "Sizing and friction computed from live CLOB top-of-book. σ and backtest load alongside 30-day history."
+                      : "Friction is a conservative proxy. Book depth and σ load when a live family is selected."}
                 </AlertDescription>
               </Alert>
 
