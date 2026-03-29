@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Chart from "chart.js/auto";
-import { Info } from "lucide-react";
+import { Info, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -20,7 +20,7 @@ import {
   buildSpreadSeries,
   computeSigmaScore,
   runBacktest,
-} from "@/lib/signals";
+} from "@/lib/PITStats";
 
 // ── P&L chart data (static until CLOB is wired in) ───────────────────────────
 const REPAIR_PCTS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
@@ -29,6 +29,9 @@ const PNL_DATA = REPAIR_PCTS.map((r) => {
   const legB = 172 * (r / 100);
   return Math.round((legA + legB - 4.82) * 100) / 100;
 });
+
+const STATUS_FILTERS = ["all", "Actionable", "Watchlist", "Normal"];
+const TYPE_FILTERS = ["all", "Strike ladder", "Expiry curve", "Mutex set"];
 
 // ── Glossary ──────────────────────────────────────────────────────────────────
 const GLOSSARY = [
@@ -152,6 +155,9 @@ export default function PolymarketRelativeValueTerminal() {
   const [isSeed, setIsSeed] = useState(true);
   const [dataAge, setDataAge] = useState(null);
   const [heroFamily, setHeroFamily] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [clobLoading, setClobLoading] = useState(false);
   const [clobHistory, setClobHistory] = useState(null); // { seriesA, seriesB, labelA, labelB }
   const [bookData, setBookData] = useState(null); // { legA: book, legB: book }
@@ -216,8 +222,8 @@ export default function PolymarketRelativeValueTerminal() {
       setClobLoading(true);
       try {
         const [seriesA, seriesB] = await Promise.all([
-          fetchPriceHistory(tokenA, { hoursBack: 48, fidelity: 60 }),
-          fetchPriceHistory(tokenB, { hoursBack: 48, fidelity: 60 }),
+          fetchPriceHistory(tokenA, { interval: "max", fidelity: 1440 }),
+          fetchPriceHistory(tokenB, { interval: "max", fidelity: 1440 }),
         ]);
         if (cancelled) return;
         setClobHistory({
@@ -600,8 +606,14 @@ export default function PolymarketRelativeValueTerminal() {
     )
       return;
     const [mktA, mktB] = heroFamily.dislocation.violatingPair;
+    const isMutexPnl = heroFamily.type === "Mutex set";
     const TARGET = 100;
-    const priceA = bookData.legA.topAsk ?? mktA.yesPrice;
+    // Mutex: buy NO on both overpriced outcomes. Strike/Expiry: buy YES on A, NO on B.
+    const priceA = isMutexPnl
+      ? bookData.legA.topBid != null
+        ? 1 - bookData.legA.topBid
+        : 1 - mktA.yesPrice
+      : (bookData.legA.topAsk ?? mktA.yesPrice);
     const sharesA = Math.round(TARGET / priceA);
     const noPrice =
       bookData.legB.topBid != null
@@ -632,13 +644,30 @@ export default function PolymarketRelativeValueTerminal() {
   const dislocatedCount = scannerRows.filter(
     (r) => r.rawDislocation > 0,
   ).length;
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredRows = scannerRows.filter((row) => {
+    const matchesSearch =
+      normalizedQuery === "" ||
+      row.family.toLowerCase().includes(normalizedQuery);
+    const matchesStatus = statusFilter === "all" || row.status === statusFilter;
+    const matchesType = typeFilter === "all" || row.type === typeFilter;
+    return matchesSearch && matchesStatus && matchesType;
+  });
+  const filtersActive =
+    normalizedQuery !== "" || statusFilter !== "all" || typeFilter !== "all";
 
   // ── Live spread economics (computed from book data) ──
   let spreadCalc = null;
   if (bookData && heroFamily?.dislocation?.violatingPair) {
     const [mktA, mktB] = heroFamily.dislocation.violatingPair;
+    const isMutex = heroFamily.type === "Mutex set";
     const TARGET = 100;
-    const priceA = bookData.legA.topAsk ?? mktA.yesPrice;
+    // Mutex: buy NO on both legs (both outcomes overpriced). Strike/Expiry: buy YES on A.
+    const priceA = isMutex
+      ? bookData.legA.topBid != null
+        ? 1 - bookData.legA.topBid
+        : 1 - mktA.yesPrice
+      : (bookData.legA.topAsk ?? mktA.yesPrice);
     const sharesA = Math.round(TARGET / priceA);
     const costA = sharesA * priceA;
     const maxGainA = sharesA * (1 - priceA);
@@ -780,60 +809,159 @@ export default function PolymarketRelativeValueTerminal() {
               from logical constraints.
             </p>
           </div>
-          <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-260px)]">
-            {scannerRows.map((row) => (
-              <button
-                key={row.family}
-                onClick={() => !row.isSeed && setHeroFamily(row)}
-                className={`scanner-item w-full text-left px-4 py-3.5 ${
-                  heroFamily?.family === row.family ? "scanner-item-active" : ""
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium leading-snug text-slate-900">
-                    {row.family}
-                  </span>
-                  <span
-                    className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
-                    title="Price deviation in percentage points"
+          <div className="border-y border-border/80 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Filter scanner
+              </p>
+              <span className="text-[11px] text-muted-foreground">
+                {filteredRows.length} shown
+              </span>
+            </div>
+            <div className="mt-3">
+              <label className="scanner-search">
+                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search families"
+                  className="scanner-search-input"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="scanner-search-clear"
+                    aria-label="Clear search"
                   >
-                    {row.severity.replace("pp", " % pts")}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span
-                    className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
-                    title={
-                      row.type === "Strike ladder"
-                        ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
-                        : row.type === "Expiry curve"
-                          ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones"
-                          : "Mutually exclusive outcomes — their probabilities must sum to ~100%"
-                    }
-                  >
-                    {row.type}
-                  </span>
-                  <span
-                    className={`rounded-full px-2 py-1 text-[10px] font-medium ${
-                      row.status === "Actionable"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : row.status === "Watchlist"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-slate-100 text-slate-500"
-                    }`}
-                    title={
-                      row.status === "Actionable"
-                        ? "Gap ≥ 4 % pts — likely profitable after costs"
-                        : row.status === "Watchlist"
-                          ? "Gap 2–4 % pts — notable but may not clear transaction costs yet"
-                          : "Gap < 2 % pts — within normal noise, no trade"
-                    }
-                  >
-                    {row.status}
-                  </span>
-                </div>
-              </button>
-            ))}
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {STATUS_FILTERS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setStatusFilter(option)}
+                  className={`scanner-filter-chip ${statusFilter === option ? "scanner-filter-chip-active" : ""}`}
+                >
+                  {option === "all" ? "All statuses" : option}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {TYPE_FILTERS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setTypeFilter(option)}
+                  className={`scanner-filter-chip ${typeFilter === option ? "scanner-filter-chip-active" : ""}`}
+                >
+                  {option === "all"
+                    ? "All types"
+                    : option === "Strike ladder"
+                      ? "Strike"
+                      : option === "Expiry curve"
+                        ? "Expiry"
+                        : "Mutex"}
+                </button>
+              ))}
+            </div>
+            {filtersActive ? (
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <p className="text-[11px] text-muted-foreground">
+                  Filters are narrowing the ranked scanner view.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setStatusFilter("all");
+                    setTypeFilter("all");
+                  }}
+                  className="text-[11px] font-medium text-slate-700 transition hover:text-slate-950"
+                >
+                  Clear filters
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-372px)]">
+            {filteredRows.length ? (
+              filteredRows.map((row) => (
+                <button
+                  key={row.family}
+                  onClick={() => !row.isSeed && setHeroFamily(row)}
+                  className={`scanner-item w-full text-left px-4 py-3.5 ${
+                    heroFamily?.family === row.family
+                      ? "scanner-item-active"
+                      : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium leading-snug text-slate-900">
+                      {row.family}
+                    </span>
+                    <span
+                      className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
+                      title="Price deviation in percentage points"
+                    >
+                      {row.severity.replace("pp", " % pts")}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span
+                      className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
+                      title={
+                        row.type === "Strike ladder"
+                          ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
+                          : row.type === "Expiry curve"
+                            ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones"
+                            : "Mutually exclusive outcomes — their probabilities must sum to ~100%"
+                      }
+                    >
+                      {row.type}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-1 text-[10px] font-medium ${
+                        row.status === "Actionable"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : row.status === "Watchlist"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-slate-100 text-slate-500"
+                      }`}
+                      title={
+                        row.status === "Actionable"
+                          ? "Gap ≥ 4 % pts — likely profitable after costs"
+                          : row.status === "Watchlist"
+                            ? "Gap 2–4 % pts — notable but may not clear transaction costs yet"
+                            : "Gap < 2 % pts — within normal noise, no trade"
+                      }
+                    >
+                      {row.status}
+                    </span>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
+                <p>No scanner families match these filters.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setStatusFilter("all");
+                    setTypeFilter("all");
+                  }}
+                  className="mt-2 font-medium text-slate-700 transition hover:text-slate-950"
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
           </div>
           {/* ── Glossary ── */}
           <div className="border-t border-border/80 px-5 py-4">
@@ -1048,7 +1176,9 @@ export default function PolymarketRelativeValueTerminal() {
                 {/* Leg A */}
                 <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    Leg A · Buy YES
+                    {heroFamily?.type === "Mutex set"
+                      ? "Leg A · Buy NO"
+                      : "Leg A · Buy YES"}
                   </p>
                   <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
                     {heroFamily?.dislocation?.violatingPair
@@ -1061,11 +1191,22 @@ export default function PolymarketRelativeValueTerminal() {
                     {[
                       [
                         "Token",
-                        spreadCalc
-                          ? `YES @ $${spreadCalc.priceA.toFixed(3)}`
-                          : heroFamily?.dislocation?.violatingPair
-                            ? `YES @ $${heroFamily.dislocation.violatingPair[0].yesPrice.toFixed(2)}`
-                            : "YES @ $0.38",
+                        (() => {
+                          const isMutexLeg = heroFamily?.type === "Mutex set";
+                          if (spreadCalc) {
+                            return isMutexLeg
+                              ? `NO @ $${spreadCalc.priceA.toFixed(3)}`
+                              : `YES @ $${spreadCalc.priceA.toFixed(3)}`;
+                          }
+                          if (heroFamily?.dislocation?.violatingPair) {
+                            const p =
+                              heroFamily.dislocation.violatingPair[0].yesPrice;
+                            return isMutexLeg
+                              ? `NO @ $${(1 - p).toFixed(2)}`
+                              : `YES @ $${p.toFixed(2)}`;
+                          }
+                          return isMutexLeg ? "NO @ —" : "YES @ —";
+                        })(),
                       ],
                       ["Shares", spreadCalc ? String(spreadCalc.sharesA) : "—"],
                       [
@@ -1095,7 +1236,9 @@ export default function PolymarketRelativeValueTerminal() {
                   {bookData && (
                     <div className="mt-3 pt-3 border-t border-slate-100">
                       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                        Depth (YES)
+                        {heroFamily?.type === "Mutex set"
+                          ? "Depth (NO · implied)"
+                          : "Depth (YES)"}
                       </p>
                       <div className="grid grid-cols-2 gap-x-3 text-[11px]">
                         <div>

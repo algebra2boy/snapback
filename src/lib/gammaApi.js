@@ -212,10 +212,13 @@ export function computeDislocation(markets, familyType) {
     const overpricing = Math.max(0, sum - 1.0);
     const sorted = [...priced].sort((a, b) => b.yesPrice - a.yesPrice);
 
+    // violatingPair = the two most overpriced outcomes — best NO candidates
+    const violatingPair = sorted.length >= 2 ? [sorted[0], sorted[1]] : null;
+
     return {
       rawDislocation: overpricing,
       sum,
-      violatingPair: null,
+      violatingPair,
       sorted,
       labels: sorted.map((m) => getQuestion(m).slice(0, 22)),
       constraintDesc: `Σ outcomes ≈ 1.00 (current: ${sum.toFixed(2)})`,

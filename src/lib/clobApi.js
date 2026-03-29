@@ -39,32 +39,52 @@ export async function fetchOrderBook(tokenId) {
  */
 export async function fetch30dHistory(tokenA, tokenB) {
   const [seriesA, seriesB] = await Promise.all([
-    fetchPriceHistory(tokenA, { hoursBack: 720, fidelity: 1440 }),
-    fetchPriceHistory(tokenB, { hoursBack: 720, fidelity: 1440 }),
+    fetchPriceHistory(tokenA, { interval: "max", fidelity: 1440 }),
+    fetchPriceHistory(tokenB, { interval: "max", fidelity: 1440 }),
   ]);
   return { seriesA, seriesB };
 }
 
 /**
  * Fetch price history for a single CLOB token (YES token ID).
- * @param {string} tokenId - The clobTokenId (YES outcome token)
- * @param {object} opts
- * @param {number} opts.hoursBack - How many hours of history to fetch (default 48)
- * @param {number} opts.fidelity  - Candle size in minutes (default 60)
+ *
+ * Two calling conventions are supported:
+ *   - Interval string: `{ interval: "1m", fidelity: 1440 }`
+ *     Passes `interval=` directly to the API (e.g. "1d", "1w", "1m").
+ *   - Hours back:      `{ hoursBack: 48, fidelity: 60 }`
+ *     Computes explicit `startTs`/`endTs` unix timestamps from the current
+ *     time minus `hoursBack` hours. Falls back to 168 h (1 week) if neither
+ *     `interval` nor `hoursBack` is supplied.
+ *
+ * @param {string} tokenId  - The clobTokenId (YES outcome token)
+ * @param {object} [opts]
+ * @param {string} [opts.interval]   - API interval string ("1d" | "1w" | "1m" | …).
+ *                                     Takes priority over hoursBack when present.
+ * @param {number} [opts.hoursBack]  - Hours of history to fetch via startTs/endTs.
+ *                                     Used when interval is not supplied.
+ * @param {number} [opts.fidelity=10] - Candle size in minutes.
  * @returns {Promise<Array<{t: number, p: number}>>} Array of {t: ms timestamp, p: probability 0-1}
  */
 export async function fetchPriceHistory(
   tokenId,
-  { hoursBack = 48, fidelity = 60 } = {},
+  { interval, hoursBack, fidelity = 10 } = {},
 ) {
-  const eTs = Math.floor(Date.now() / 1000);
-  const sTs = eTs - hoursBack * 3600;
-  const url = `${CLOB_BASE}/prices-history?market=${tokenId}&startTs=${sTs}&endTs=${eTs}&fidelity=${fidelity}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+  let timeParams;
+  if (interval) {
+    // Caller supplied a string interval like "1w", "1m", "1d"
+    timeParams = `interval=${interval}`;
+  } else {
+    // Caller supplied hoursBack (or default 1 week) — build explicit timestamps
+    const eTs = Math.floor(Date.now() / 1000);
+    const sTs = eTs - (hoursBack ?? 168) * 3600;
+    timeParams = `startTs=${sTs}&endTs=${eTs}`;
+  }
+  const url = `${CLOB_BASE}/prices-history?market=${tokenId}&${timeParams}&fidelity=${fidelity}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`CLOB /prices-history returned ${res.status}`);
   const json = await res.json();
   return (json.history ?? []).map((pt) => ({
-    t: pt.t * 1000, // convert to ms
-    p: parseFloat(pt.p), // probability 0–1
+    t: pt.t * 1000, // convert to ms -- time
+    p: parseFloat(pt.p), // probability 0–1 -- price
   }));
 }
