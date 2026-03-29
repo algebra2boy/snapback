@@ -130,6 +130,46 @@ function FreshnessBadge({ dataAge, isSeed }) {
   );
 }
 
+// ── Glossary modal ────────────────────────────────────────────────────────────
+function GlossaryModal({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div
+        className="relative w-full max-w-lg rounded-2xl border border-border/80 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.18)] max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Info className="size-4 text-slate-500" />
+            <h2 className="text-sm font-semibold text-slate-900">Glossary</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-muted-foreground hover:bg-slate-100 hover:text-slate-900 transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        {/* Terms */}
+        <div className="overflow-y-auto px-6 py-4 space-y-4">
+          {GLOSSARY.map(({ term, def }) => (
+            <div key={term}>
+              <p className="text-xs font-semibold text-slate-900">{term}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{def}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Format ms timestamp as "MMM D HH:MM" ─────────────────────────────────────
 function fmtTime(ms) {
   const d = new Date(ms);
@@ -158,6 +198,7 @@ export default function PolymarketRelativeValueTerminal() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [clobLoading, setClobLoading] = useState(false);
   const [clobHistory, setClobHistory] = useState(null); // { seriesA, seriesB, labelA, labelB }
   const [bookData, setBookData] = useState(null); // { legA: book, legB: book }
@@ -741,6 +782,7 @@ export default function PolymarketRelativeValueTerminal() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <GlossaryModal open={glossaryOpen} onClose={() => setGlossaryOpen(false)} />
       {/* ── Top nav bar ── */}
       <header className="sticky top-0 z-20 border-b border-border/80 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
@@ -765,8 +807,17 @@ export default function PolymarketRelativeValueTerminal() {
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden items-center gap-5 text-sm md:flex">
-              <span>
-                <span className="text-muted-foreground">Families </span>
+              <span className="flex items-center gap-1">
+                <button
+                  onClick={() => setGlossaryOpen(true)}
+                  className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
+                  aria-label="Open glossary"
+                  title="Open glossary"
+                >
+                  <Info className="size-3" />
+                  <span className="text-[10px] font-medium">Glossary</span>
+                </button>
+                <span className="text-muted-foreground">Families</span>
                 <span className="font-medium">
                   {loading ? "—" : scannerRows.length}
                 </span>
