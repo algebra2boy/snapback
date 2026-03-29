@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import Chart from "chart.js/auto";
-import { Info, Search, X } from "lucide-react";
+import { ChevronDown, Info, Palette, Search, X } from "lucide-react";
+import { useTheme, THEMES } from "@/lib/ThemeContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -81,7 +82,7 @@ function Tooltip({ text }) {
   return (
     <div className="relative group inline-flex">
       <Info className="size-3 text-muted-foreground/55 cursor-help" />
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-[80] mb-2 w-56 -translate-x-1/2 rounded-xl border border-border/80 bg-white/98 px-3 py-2 text-[11px] leading-relaxed text-popover-foreground opacity-0 shadow-[0_18px_48px_rgba(15,23,42,0.14)] transition-opacity group-hover:opacity-100">
+      <div className="ui-tooltip pointer-events-none absolute bottom-full left-1/2 z-[80] mb-2 w-56 -translate-x-1/2 rounded-xl border border-border/80 bg-white/98 px-3 py-2 text-[11px] leading-relaxed text-popover-foreground opacity-0 shadow-[0_18px_48px_rgba(15,23,42,0.14)] transition-opacity group-hover:opacity-100">
         {text}
         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-border" />
       </div>
@@ -94,11 +95,11 @@ function AxisLabel({ fullLabel, shortLabel }) {
 
   return (
     <div className="group relative min-w-0 px-1">
-      <span className="block truncate text-center text-[11px] leading-4 text-slate-500">
+      <span className="axis-label block truncate text-center text-[11px] leading-4 text-slate-500">
         {shortLabel}
       </span>
       {isTruncated && (
-        <div className="pointer-events-none absolute left-1/2 top-full z-40 mt-2 hidden w-48 -translate-x-1/2 rounded-xl border border-border/80 bg-white px-3 py-2 text-center text-[11px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.12)] group-hover:block">
+        <div className="axis-tooltip pointer-events-none absolute left-1/2 top-full z-40 mt-2 hidden w-48 -translate-x-1/2 rounded-xl border border-border/80 bg-white px-3 py-2 text-center text-[11px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.12)] group-hover:block">
           {fullLabel}
         </div>
       )}
@@ -110,16 +111,16 @@ function AxisLabel({ fullLabel, shortLabel }) {
 function StatCell({ label, value, valueCls, tooltip, border = true }) {
   return (
     <div
-      className={`px-5 py-4 md:px-6 ${border ? "border-r border-border/80" : ""}`}
+      className={`stat-cell px-5 py-4 md:px-6 ${border ? "border-r border-border/80" : ""}`}
     >
       <div className="mb-1 flex items-center gap-1.5">
-        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        <p className="pixel-kicker text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
           {label}
         </p>
         {tooltip && <Tooltip text={tooltip} />}
       </div>
       <p
-        className={`text-[15px] font-semibold tracking-[-0.02em] ${valueCls ?? ""}`}
+        className={`stat-value text-[15px] font-semibold tracking-[-0.02em] ${valueCls ?? ""}`}
       >
         {value ?? "—"}
       </p>
@@ -131,7 +132,7 @@ function StatCell({ label, value, valueCls, tooltip, border = true }) {
 function FreshnessBadge({ dataAge, isSeed }) {
   if (isSeed)
     return (
-      <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600">
+      <span className="freshness-badge freshness-badge-seed rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600">
         Offline · seed data
       </span>
     );
@@ -139,12 +140,12 @@ function FreshnessBadge({ dataAge, isSeed }) {
   const seconds = Math.floor((Date.now() - dataAge) / 1000);
   if (seconds < 60)
     return (
-      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">
+      <span className="freshness-badge freshness-badge-live rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">
         Live · {seconds}s ago
       </span>
     );
   return (
-    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">
+    <span className="freshness-badge freshness-badge-cached rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">
       Cached · {Math.floor(seconds / 60)}m ago
     </span>
   );
@@ -733,9 +734,112 @@ function buildViolationAlert(family) {
   };
 }
 
+// ── Theme dropdown ────────────────────────────────────────────────────────────
+const THEME_OPTIONS = [
+  { value: THEMES.default, label: "Default" },
+  { value: THEMES.pixel, label: "Pixel" },
+];
+
+function ThemeDropdown({ theme, setTheme }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  const isPixel = theme === THEMES.pixel;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 rounded-md border border-border/60 bg-card px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+        style={
+          isPixel
+            ? {
+                borderColor: "rgba(123, 111, 84, 0.16)",
+                color: "#2f2619",
+                background: "rgba(255, 250, 239, 0.96)",
+                boxShadow: "none",
+                fontFamily: "'Silkscreen', monospace",
+                fontSize: "14px",
+                lineHeight: 1,
+              }
+            : {}
+        }
+      >
+        <Palette className="h-3 w-3 shrink-0" />
+        <span>Themes</span>
+        <ChevronDown
+          className={`h-3 w-3 shrink-0 transition-transform duration-150${open ? " rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-md border border-border bg-popover py-1 shadow-lg"
+          style={
+            isPixel
+              ? {
+                  borderRadius: "8px",
+                  border: "1px solid rgba(123, 111, 84, 0.14)",
+                  background: "rgba(255, 249, 236, 0.98)",
+                  boxShadow: "0 18px 36px rgba(115, 89, 44, 0.12)",
+                }
+              : {}
+          }
+        >
+          {THEME_OPTIONS.map((opt) => {
+            const active = theme === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => {
+                  setTheme(opt.value);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground transition-colors hover:bg-muted"
+                style={
+                  isPixel
+                    ? {
+                        fontFamily: "'Silkscreen', monospace",
+                        fontSize: "14px",
+                        lineHeight: 1,
+                        color: active ? "#4966d1" : "#2f2619",
+                      }
+                    : {}
+                }
+              >
+                <span className="flex-1">{opt.label}</span>
+                {active && (
+                  <span
+                    style={
+                      isPixel
+                        ? { color: "#4966d1" }
+                        : { color: "var(--primary)" }
+                    }
+                  >
+                    ✓
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main terminal ─────────────────────────────────────────────────────────────
 export default function PolymarketRelativeValueTerminal() {
   const { user, logout } = useAuth0();
+  const { theme, setTheme } = useTheme();
+  const isPixel = theme === THEMES.pixel;
   const strikeChartRef = useRef(null);
   const pnlChartRef = useRef(null);
   const historyChartRef = useRef(null);
@@ -929,8 +1033,27 @@ export default function PolymarketRelativeValueTerminal() {
 
   // ── Init charts once ──
   useEffect(() => {
-    const grid = "rgba(148,163,184,0.18)";
-    const txt = "rgba(71,85,105,0.92)";
+    const grid = isPixel
+      ? "rgba(121, 105, 74, 0.16)"
+      : "rgba(148,163,184,0.18)";
+    const txt = isPixel ? "#6d5c43" : "rgba(71,85,105,0.92)";
+    const tooltipBg = isPixel ? "rgba(255, 249, 236, 0.98)" : "#ffffff";
+    const tooltipTitle = isPixel ? "#2f2619" : "#111827";
+    const tooltipBody = isPixel ? "#6d5c43" : "rgba(15,23,42,0.72)";
+    const tooltipBorder = isPixel
+      ? "rgba(123, 111, 84, 0.16)"
+      : "rgba(15,23,42,0.1)";
+    const envelopeBorder = isPixel
+      ? "rgba(86, 153, 92, 0.38)"
+      : "rgba(31,158,117,0.25)";
+    const envelopeFill = isPixel
+      ? "rgba(86, 153, 92, 0.12)"
+      : "rgba(31,158,117,0.05)";
+    const marketColor = isPixel ? "#4f78df" : "#378ADD";
+    const violationColor = isPixel ? "#d97849" : "#FF5000";
+    const pnlColor = isPixel ? "#56995c" : "#00C805";
+    const pnlFill = isPixel ? "rgba(86, 153, 92, 0.14)" : "rgba(0,200,5,0.08)";
+    const historyAltColor = isPixel ? "#d19d45" : "#FF5000";
 
     strikeChart.current?.destroy();
     pnlChart.current?.destroy();
@@ -944,8 +1067,8 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "No-arb upper bound",
             data: [],
-            borderColor: "rgba(31,158,117,0.25)",
-            backgroundColor: "rgba(31,158,117,0.05)",
+            borderColor: envelopeBorder,
+            backgroundColor: envelopeFill,
             fill: true,
             borderWidth: 1,
             borderDash: [4, 4],
@@ -955,8 +1078,8 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "Market prices",
             data: [],
-            borderColor: "#378ADD",
-            backgroundColor: "#378ADD",
+            borderColor: marketColor,
+            backgroundColor: marketColor,
             borderWidth: 2,
             pointRadius: 6,
             pointBackgroundColor: [],
@@ -972,10 +1095,10 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: "#ffffff",
-            titleColor: "#111827",
-            bodyColor: "rgba(15,23,42,0.72)",
-            borderColor: "rgba(15,23,42,0.1)",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
             callbacks: {
               label: (ctx) =>
@@ -1025,8 +1148,8 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "Net P&L after fees",
             data: PNL_DATA,
-            borderColor: "#00C805",
-            backgroundColor: "rgba(0,200,5,0.08)",
+            borderColor: pnlColor,
+            backgroundColor: pnlFill,
             fill: true,
             borderWidth: 2,
             pointRadius: 0,
@@ -1035,7 +1158,7 @@ export default function PolymarketRelativeValueTerminal() {
           {
             label: "Break-even",
             data: REPAIR_PCTS.map(() => 0),
-            borderColor: "#FF5000",
+            borderColor: historyAltColor,
             borderWidth: 1,
             borderDash: [6, 4],
             pointRadius: 0,
@@ -1049,10 +1172,10 @@ export default function PolymarketRelativeValueTerminal() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: "#ffffff",
-            titleColor: "#111827",
-            bodyColor: "rgba(15,23,42,0.72)",
-            borderColor: "rgba(15,23,42,0.1)",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
           },
         },
@@ -1090,10 +1213,10 @@ export default function PolymarketRelativeValueTerminal() {
             },
           },
           tooltip: {
-            backgroundColor: "#ffffff",
-            titleColor: "#111827",
-            bodyColor: "rgba(15,23,42,0.72)",
-            borderColor: "rgba(15,23,42,0.1)",
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTitle,
+            bodyColor: tooltipBody,
+            borderColor: tooltipBorder,
             borderWidth: 1,
             callbacks: {
               label: (ctx) =>
@@ -1136,15 +1259,17 @@ export default function PolymarketRelativeValueTerminal() {
       pnlChart.current?.destroy();
       historyChart.current?.destroy();
     };
-  }, []);
+  }, [isPixel]);
 
   // ── Update strike chart on heroFamily change ──
   useEffect(() => {
     if (!strikeChart.current || !heroFamily?.markets.length) return;
     const prices = heroFamily.markets.map((m) => m.yesPrice * 100);
     const envelope = computeNoArbEnvelope(prices);
+    const marketColor = isPixel ? "#4f78df" : "#378ADD";
+    const violationColor = isPixel ? "#d97849" : "#FF5000";
     const colors = prices.map((p, i) =>
-      p > envelope[i] ? "#FF5000" : "#378ADD",
+      p > envelope[i] ? violationColor : marketColor,
     );
     const rawLabels = heroFamily.markets.map((market, index) => {
       const explicitLabel = heroFamily.labels?.[index];
@@ -1164,7 +1289,7 @@ export default function PolymarketRelativeValueTerminal() {
     c.options.scales.x.ticks.maxTicksLimit =
       heroFamily.type === "Mutex set" ? 8 : 12;
     c.update();
-  }, [heroFamily]);
+  }, [heroFamily, isPixel]);
 
   // ── Update history chart on clobHistory change ──
   useEffect(() => {
@@ -1190,8 +1315,10 @@ export default function PolymarketRelativeValueTerminal() {
       {
         label: labelA,
         data: seriesA.map((pt) => pt.p),
-        borderColor: "#378ADD",
-        backgroundColor: "rgba(55,138,221,0.06)",
+        borderColor: isPixel ? "#4f78df" : "#378ADD",
+        backgroundColor: isPixel
+          ? "rgba(79, 120, 223, 0.08)"
+          : "rgba(55,138,221,0.06)",
         fill: false,
         borderWidth: 2,
         pointRadius: 0,
@@ -1200,8 +1327,10 @@ export default function PolymarketRelativeValueTerminal() {
       {
         label: labelB,
         data: seriesA.map((pt) => bByTime.get(pt.t) ?? null),
-        borderColor: "#FF5000",
-        backgroundColor: "rgba(255,80,0,0.06)",
+        borderColor: isPixel ? "#d19d45" : "#FF5000",
+        backgroundColor: isPixel
+          ? "rgba(209, 157, 69, 0.08)"
+          : "rgba(255,80,0,0.06)",
         fill: false,
         borderWidth: 2,
         pointRadius: 0,
@@ -1210,7 +1339,7 @@ export default function PolymarketRelativeValueTerminal() {
       },
     ];
     c.update();
-  }, [clobHistory]);
+  }, [clobHistory, isPixel]);
 
   // ── Update P&L chart when live book data arrives ──
   useEffect(() => {
@@ -1382,14 +1511,14 @@ export default function PolymarketRelativeValueTerminal() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[15px] font-semibold tracking-tight">
+                <span className="pixel-font text-[15px] font-semibold tracking-tight">
                   Snapback
                 </span>
                 <span className="text-sm text-muted-foreground">
                   No-arb Terminal
                 </span>
               </div>
-              <p className="hidden text-xs text-muted-foreground md:block">
+              <p className="terminal-tagline hidden text-xs text-muted-foreground md:block">
                 Scan structurally linked markets, inspect the violated surface,
                 then price the corrective spread.
               </p>
@@ -1397,31 +1526,37 @@ export default function PolymarketRelativeValueTerminal() {
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden items-center gap-5 text-sm md:flex">
-              <span className="flex items-center gap-1">
+              <span className="terminal-topbar-stat flex items-center gap-1">
                 <button
                   onClick={() => setGlossaryOpen(true)}
-                  className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
+                  className="topbar-utility-button flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
                   aria-label="Open glossary"
                   title="Open glossary"
                 >
                   <Info className="size-3" />
                   <span className="text-[10px] font-medium">Glossary</span>
                 </button>
-                <span className="text-muted-foreground">Families</span>
-                <span className="font-medium">
+                <span className="terminal-topbar-stat-label pixel-kicker text-muted-foreground">
+                  Families
+                </span>
+                <span className="terminal-topbar-stat-value pixel-font font-medium">
                   {loading ? "—" : scannerRows.length}
                 </span>
               </span>
-              <span>
-                <span className="text-muted-foreground">Dislocations </span>
-                <span className="font-medium">
+              <span className="terminal-topbar-stat">
+                <span className="terminal-topbar-stat-label pixel-kicker text-muted-foreground">
+                  Dislocations
+                </span>{" "}
+                <span className="terminal-topbar-stat-value pixel-font font-medium">
                   {loading ? "—" : dislocatedCount}
                 </span>
               </span>
-              <span>
-                <span className="text-muted-foreground">Actionable </span>
+              <span className="terminal-topbar-stat">
+                <span className="terminal-topbar-stat-label pixel-kicker text-muted-foreground">
+                  Actionable
+                </span>{" "}
                 <span
-                  className={`font-semibold ${actionableCount > 0 ? "text-emerald-600" : ""}`}
+                  className={`terminal-topbar-stat-value pixel-font font-semibold ${actionableCount > 0 ? "is-actionable text-emerald-600" : ""}`}
                 >
                   {loading ? "—" : actionableCount}
                 </span>
@@ -1433,8 +1568,11 @@ export default function PolymarketRelativeValueTerminal() {
                 Fetching…
               </span>
             )}
+            {/* ── Theme dropdown ── */}
+            <ThemeDropdown theme={theme} setTheme={setTheme} />
+
             {/* ── User avatar + logout ── */}
-            <div className="flex items-center gap-2 border-l border-border/60 pl-3">
+            <div className="terminal-user-shell flex items-center gap-2 border-l border-border/60 pl-3">
               {user?.picture ? (
                 <img
                   src={user.picture}
@@ -1446,16 +1584,12 @@ export default function PolymarketRelativeValueTerminal() {
                   {user?.name?.[0]?.toUpperCase() ?? "U"}
                 </div>
               )}
-              <div className="hidden flex-col md:flex">
-                <span className="text-[11px] font-medium leading-tight text-slate-700 max-w-[120px] truncate">
-                  {user?.name ?? user?.email ?? "Signed in"}
-                </span>
-              </div>
+
               <button
                 onClick={() =>
                   logout({ logoutParams: { returnTo: window.location.origin } })
                 }
-                className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+                className="terminal-user-button rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
                 title="Sign out"
               >
                 Sign out
@@ -1470,17 +1604,17 @@ export default function PolymarketRelativeValueTerminal() {
         {/* ── Scanner sidebar ── */}
         <aside className="glass-panel w-full shrink-0 overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100vh-112px)] lg:w-72">
           <div className="border-b border-border/80 px-5 py-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Scanner
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <p className="panel-copy mt-2 text-sm text-muted-foreground">
               Groups of linked markets ranked by how far their prices deviate
               from logical constraints.
             </p>
           </div>
           <div className="border-y border-border/80 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Filter scanner
               </p>
               <span className="text-[11px] text-muted-foreground">
@@ -1541,7 +1675,7 @@ export default function PolymarketRelativeValueTerminal() {
             </div>
             {filtersActive ? (
               <div className="mt-3 flex items-center justify-between gap-3">
-                <p className="text-[11px] text-muted-foreground">
+                <p className="panel-copy text-[11px] text-muted-foreground">
                   Filters are narrowing the ranked scanner view.
                 </p>
                 <button
@@ -1571,11 +1705,11 @@ export default function PolymarketRelativeValueTerminal() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium leading-snug text-slate-900">
+                    <span className="scanner-row-name pixel-font text-sm font-medium leading-snug text-slate-900">
                       {row.family}
                     </span>
                     <span
-                      className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
+                      className={`scanner-row-severity text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
                       title="Price deviation in percentage points"
                     >
                       {row.severity.replace("pp", " % pts")}
@@ -1583,7 +1717,7 @@ export default function PolymarketRelativeValueTerminal() {
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span
-                      className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
+                      className="scanner-row-type rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
                       title={
                         row.type === "Strike ladder"
                           ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
@@ -1595,12 +1729,12 @@ export default function PolymarketRelativeValueTerminal() {
                       {row.type}
                     </span>
                     <span
-                      className={`rounded-full px-2 py-1 text-[10px] font-medium ${
+                      className={`scanner-row-status rounded-full px-2 py-1 text-[10px] font-medium ${
                         row.status === "Actionable"
-                          ? "bg-emerald-100 text-emerald-700"
+                          ? "scanner-row-status-actionable bg-emerald-100 text-emerald-700"
                           : row.status === "Watchlist"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-500"
+                            ? "scanner-row-status-watchlist bg-amber-100 text-amber-700"
+                            : "scanner-row-status-normal bg-slate-100 text-slate-500"
                       }`}
                       title={
                         row.status === "Actionable"
@@ -1616,7 +1750,7 @@ export default function PolymarketRelativeValueTerminal() {
                 </button>
               ))
             ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
+              <div className="scanner-empty rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
                 <p>No scanner families match these filters.</p>
                 <button
                   type="button"
@@ -1634,16 +1768,16 @@ export default function PolymarketRelativeValueTerminal() {
           </div>
           {/* ── Glossary ── */}
           <div className="border-t border-border/80 px-5 py-4">
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            <p className="pixel-kicker mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Glossary
             </p>
             <dl className="space-y-2">
               {GLOSSARY.map(({ term, def }) => (
                 <div key={term}>
-                  <dt className="text-[11px] font-semibold text-slate-700">
+                  <dt className="glossary-term pixel-font text-[11px] font-semibold text-slate-700">
                     {term}
                   </dt>
-                  <dd className="text-[11px] leading-relaxed text-muted-foreground">
+                  <dd className="glossary-copy text-[11px] leading-relaxed text-muted-foreground">
                     {def}
                   </dd>
                 </div>
@@ -1657,27 +1791,27 @@ export default function PolymarketRelativeValueTerminal() {
           {/* ── Family header + chart ── */}
           <section className="px-8 pt-7 pb-6 border-b border-border">
             {/* Title row */}
-            <div className="soft-grid border-b border-border/80 px-6 pb-6 pt-7 sm:px-8">
+            <div className="family-stage soft-grid border-b border-border/80 px-6 pb-6 pt-7 sm:px-8">
               <div className="mb-6 flex flex-col items-start justify-between gap-6 lg:flex-row">
                 <div className="max-w-2xl">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                     Selected market group
                   </p>
-                  <h2 className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.04em] text-slate-950">
+                  <h2 className="hero-family-name pixel-font mt-3 text-2xl font-semibold leading-tight tracking-[-0.04em] text-slate-950">
                     {heroFamily?.family ?? "—"}
                   </h2>
-                  <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
+                  <p className="hero-family-copy mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
                     {heroFamily?.dislocation?.constraintDesc ??
                       "Select a family from the scanner"}
                   </p>
                   {violationAlert && (
-                    <div className="mt-4 rounded-2xl border border-red-100 bg-red-50/90 px-4 py-3 text-red-700">
+                    <div className="violation-alert mt-4 rounded-2xl border border-red-100 bg-red-50/90 px-4 py-3 text-red-700">
                       <div className="flex items-start gap-3">
                         <span className="mt-0.5 shrink-0 text-base leading-none">
                           ⚠
                         </span>
                         <div className="min-w-0">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">
+                          <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">
                             {violationAlert.eyebrow}
                           </p>
                           <p className="mt-1 text-sm font-medium leading-6 text-red-700">
@@ -1691,9 +1825,9 @@ export default function PolymarketRelativeValueTerminal() {
                     </div>
                   )}
                 </div>
-                <div className="min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
+                <div className="hero-scorecard min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
                   <div className="flex items-center justify-between gap-2 lg:justify-end">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                       {sigmaLabel ? "Sigma score" : "Price deviation"}
                     </p>
                     {sigmaLabel && (
@@ -1766,14 +1900,14 @@ export default function PolymarketRelativeValueTerminal() {
           {/* ── CLOB price history (48h) ── */}
           <section className="px-8 py-6 border-b border-border">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-semibold">Price history · 48h</p>
+              <p className="section-title text-sm font-semibold">Price history · 48h</p>
               {clobLoading && (
-                <span className="text-xs text-muted-foreground animate-pulse">
+                <span className="section-meta text-xs text-muted-foreground animate-pulse">
                   Loading CLOB history…
                 </span>
               )}
               {!clobLoading && clobHistory && (
-                <span className="text-xs text-muted-foreground">
+                <span className="section-meta text-xs text-muted-foreground">
                   via CLOB /prices-history
                 </span>
               )}
@@ -1781,7 +1915,7 @@ export default function PolymarketRelativeValueTerminal() {
                 !clobHistory &&
                 !heroFamily?.isSeed &&
                 heroFamily && (
-                  <span className="text-xs text-red-400">
+                  <span className="section-danger text-xs text-red-400">
                     CLOB history unavailable
                   </span>
                 )}
@@ -1793,7 +1927,7 @@ export default function PolymarketRelativeValueTerminal() {
                 className={clobHistory ? "" : "opacity-0"}
               />
               {!clobHistory && !clobLoading && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+                <div className="chart-placeholder absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
                   {heroFamily && !heroFamily.isSeed
                     ? "No CLOB history data"
                     : "Select a live family to view history"}
@@ -1803,7 +1937,7 @@ export default function PolymarketRelativeValueTerminal() {
           </section>
 
           {/* ── Stats bar ── */}
-          <div className="glass-panel grid grid-cols-2 md:grid-cols-4">
+          <div className="glass-panel stat-strip grid grid-cols-2 md:grid-cols-4">
             <StatCell
               label="Markets in family"
               value={heroFamily ? String(heroFamily.markets.length) : "—"}
@@ -1841,33 +1975,33 @@ export default function PolymarketRelativeValueTerminal() {
           </div>
 
           {/* ── Spread builder ── */}
-          <section className="glass-panel overflow-hidden">
+          <section className="glass-panel spread-builder overflow-hidden">
             <div className="border-b border-border/80 px-6 py-5 sm:px-8">
               <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                     Spread builder
                   </p>
-                  <h3 className="mt-2 text-base font-semibold text-slate-950">
+                  <h3 className="spread-section-title pixel-font mt-2 text-base font-semibold text-slate-950">
                     Corrective spread
                   </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <p className="panel-copy mt-1 text-sm text-muted-foreground">
                     Direction is structurally implied. The UI stays explicit
                     about what is live versus what is still proxy data.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {bookLoading && (
-                    <span className="text-xs text-muted-foreground animate-pulse">
+                    <span className="section-meta text-xs text-muted-foreground animate-pulse">
                       Loading book…
                     </span>
                   )}
                   {bookData && !bookLoading && (
-                    <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                    <span className="surface-badge surface-badge-live rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
                       Live book
                     </span>
                   )}
-                  <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                  <Badge className="surface-badge surface-badge-auto rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
                     Auto-generated
                   </Badge>
                 </div>
@@ -1878,13 +2012,13 @@ export default function PolymarketRelativeValueTerminal() {
               {/* ── Two legs ── */}
               <div className="grid gap-4 lg:grid-cols-2">
                 {/* Leg A */}
-                <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                <div className="spread-leg-card rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
+                  <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     {heroFamily?.type === "Mutex set"
                       ? "Leg A · Buy NO"
                       : "Leg A · Buy YES"}
                   </p>
-                  <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
+                  <p className="spread-section-title pixel-font mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
                     {heroFamily?.dislocation?.violatingPair
                       ? getQuestion(
                           heroFamily.dislocation.violatingPair[0],
@@ -1982,11 +2116,11 @@ export default function PolymarketRelativeValueTerminal() {
                   )}
                 </div>
                 {/* Leg B */}
-                <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                <div className="spread-leg-card rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
+                  <p className="pixel-kicker text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     Leg B · Buy NO
                   </p>
-                  <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
+                  <p className="spread-section-title pixel-font mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
                     {heroFamily?.dislocation?.violatingPair
                       ? getQuestion(
                           heroFamily.dislocation.violatingPair[1],
@@ -2080,16 +2214,16 @@ export default function PolymarketRelativeValueTerminal() {
               <div>
                 <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">
+                    <p className="section-title text-sm font-semibold text-slate-950">
                       P&amp;L vs. repair amount
                     </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="section-meta mt-1 text-sm text-muted-foreground">
                       {spreadCalc
                         ? "Live — sized from CLOB top-of-book."
                         : "Illustrative until CLOB book loads."}
                     </p>
                   </div>
-                  <div className="flex gap-4 text-xs text-muted-foreground">
+                  <div className="section-meta flex gap-4 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <span className="inline-block h-0.5 w-3 rounded bg-[#00C805]" />
                       Net P&amp;L
@@ -2100,14 +2234,14 @@ export default function PolymarketRelativeValueTerminal() {
                     </span>
                   </div>
                 </div>
-                <div className="relative h-44 rounded-[28px] border border-slate-200/80 bg-white/84 p-4 shadow-sm">
+                <div className="analytics-chart-shell relative h-44 rounded-[28px] border border-slate-200/80 bg-white/84 p-4 shadow-sm">
                   <canvas ref={pnlChartRef} />
                 </div>
               </div>
 
               {/* ── Summary stats ── */}
               <div>
-                <p className="mb-3 text-sm font-semibold text-slate-950">
+                <p className="section-title mb-3 text-sm font-semibold text-slate-950">
                   Summary
                 </p>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -2153,7 +2287,7 @@ export default function PolymarketRelativeValueTerminal() {
                   ].map(({ label, value, valueCls, tooltip }) => (
                     <div
                       key={label}
-                      className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm"
+                      className="analytics-card rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm"
                     >
                       <div className="mb-1 flex items-center gap-1.5">
                         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
@@ -2175,10 +2309,10 @@ export default function PolymarketRelativeValueTerminal() {
               <div>
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">
+                    <p className="section-title text-sm font-semibold text-slate-950">
                       Evidence · PIT leave-one-out
                     </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="section-meta mt-1 text-sm text-muted-foreground">
                       {analyticsData?.backtest
                         ? "Computed from 30-day daily CLOB history with point-in-time σ triggers."
                         : analyticsLoading
@@ -2187,7 +2321,7 @@ export default function PolymarketRelativeValueTerminal() {
                     </p>
                   </div>
                   {analyticsLoading && (
-                    <span className="text-xs text-muted-foreground animate-pulse">
+                    <span className="section-meta text-xs text-muted-foreground animate-pulse">
                       Computing…
                     </span>
                   )}
@@ -2264,7 +2398,7 @@ export default function PolymarketRelativeValueTerminal() {
                       {cells.map(({ label, value, cls }) => (
                         <div
                           key={label}
-                          className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm"
+                          className="analytics-card rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm"
                         >
                           <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                             {label}
@@ -2280,7 +2414,7 @@ export default function PolymarketRelativeValueTerminal() {
                   );
                 })()}
                 {analyticsData?.backtest && (
-                  <p className="mt-2 text-[11px] text-muted-foreground">
+                  <p className="section-meta mt-2 text-[11px] text-muted-foreground">
                     Trigger: σ ≥ 2 (point-in-time). Close: σ ≤ 0.5 or 7-day
                     timeout. Friction: 2% per round-trip.
                   </p>
@@ -2288,8 +2422,8 @@ export default function PolymarketRelativeValueTerminal() {
               </div>
 
               {/* ── Model risk ── */}
-              <Alert className="border-amber-200 bg-amber-50">
-                <AlertDescription className="text-sm leading-6 text-amber-800">
+              <Alert className="theme-notice border-amber-200 bg-amber-50">
+                <AlertDescription className="theme-notice-copy text-sm leading-6 text-amber-800">
                   {analyticsData
                     ? "σ score and backtest computed from live 30-day CLOB history. Small episode counts mean wide confidence intervals — treat evidence bands as directional, not precise."
                     : spreadCalc
@@ -2302,7 +2436,7 @@ export default function PolymarketRelativeValueTerminal() {
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Button
                   size="lg"
-                  className="bg-slate-950 px-8 font-semibold text-white hover:bg-slate-800"
+                  className="theme-primary-action bg-slate-950 px-8 font-semibold text-white hover:bg-slate-800"
                   onClick={() => setOrderModalOpen(true)}
                 >
                   Build spread order
@@ -2310,7 +2444,7 @@ export default function PolymarketRelativeValueTerminal() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="border-slate-200 bg-white px-8 text-slate-900 hover:bg-slate-50"
+                  className="theme-secondary-action border-slate-200 bg-white px-8 text-slate-900 hover:bg-slate-50"
                   onClick={() => setReplayOpen(true)}
                 >
                   View replay
