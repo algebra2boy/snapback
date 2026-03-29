@@ -78,10 +78,27 @@ function Tooltip({ text }) {
   return (
     <div className="relative group inline-flex">
       <Info className="size-3 text-muted-foreground/55 cursor-help" />
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-56 -translate-x-1/2 rounded-xl border border-border/80 bg-white/98 px-3 py-2 text-[11px] leading-relaxed text-popover-foreground opacity-0 shadow-[0_18px_48px_rgba(15,23,42,0.14)] transition-opacity group-hover:opacity-100">
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-[80] mb-2 w-56 -translate-x-1/2 rounded-xl border border-border/80 bg-white/98 px-3 py-2 text-[11px] leading-relaxed text-popover-foreground opacity-0 shadow-[0_18px_48px_rgba(15,23,42,0.14)] transition-opacity group-hover:opacity-100">
         {text}
         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-border" />
       </div>
+    </div>
+  );
+}
+
+function AxisLabel({ fullLabel, shortLabel }) {
+  const isTruncated = fullLabel !== shortLabel;
+
+  return (
+    <div className="group relative min-w-0 px-1">
+      <span className="block truncate text-center text-[11px] leading-4 text-slate-500">
+        {shortLabel}
+      </span>
+      {isTruncated && (
+        <div className="pointer-events-none absolute left-1/2 top-full z-40 mt-2 hidden w-48 -translate-x-1/2 rounded-xl border border-border/80 bg-white px-3 py-2 text-center text-[11px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.12)] group-hover:block">
+          {fullLabel}
+        </div>
+      )}
     </div>
   );
 }
@@ -179,6 +196,43 @@ function fmtTime(ms) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function simplifyMarketLabel(label) {
+  if (!label) return "";
+  return label
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/\bSpace Exploration Technologies Corp\.?\b/gi, "SpaceX")
+    .replace(/\bbefore the end of\b/gi, "by")
+    .replace(/\bbefore\b/gi, "by")
+    .replace(/\bwill\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncateAxisLabel(label, maxLength = 18) {
+  if (!label) return "";
+  if (label.length <= maxLength) return label;
+  return `${label.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildViolationAlert(family) {
+  if (!family?.dislocation) return null;
+  const { violatingPair, rawDislocation } = family.dislocation;
+  if (!violatingPair || rawDislocation <= 0) return null;
+
+  const [lowerLeg, upperLeg] = violatingPair;
+  const upperPrice = (upperLeg.yesPrice * 100).toFixed(1);
+  const lowerPrice = (lowerLeg.yesPrice * 100).toFixed(1);
+  const gap = (rawDislocation * 100).toFixed(1);
+  const upperLabel = simplifyMarketLabel(getQuestion(upperLeg));
+  const lowerLabel = simplifyMarketLabel(getQuestion(lowerLeg));
+
+  return {
+    eyebrow: `${gap}pp ordering break`,
+    summary: `${upperLabel} is trading at ${upperPrice}¢.`,
+    detail: `${lowerLabel} is still at ${lowerPrice}¢, even though this family should be ordered the other way around.`,
+  };
 }
 
 // ── Main terminal ─────────────────────────────────────────────────────────────
@@ -442,13 +496,21 @@ export default function PolymarketRelativeValueTerminal() {
           },
           x: {
             title: {
-              display: true,
-              text: "Strike",
+              display: false,
+              text: "",
               color: txt,
               font: { size: 11 },
             },
             grid: { display: false },
-            ticks: { color: txt, font: { size: 11 } },
+            ticks: {
+              display: false,
+              color: txt,
+              font: { size: 11 },
+              autoSkip: true,
+              maxTicksLimit: 10,
+              minRotation: 0,
+              maxRotation: 0,
+            },
           },
         },
       },
@@ -583,12 +645,23 @@ export default function PolymarketRelativeValueTerminal() {
     const colors = prices.map((p, i) =>
       p > envelope[i] ? "#FF5000" : "#378ADD",
     );
+    const rawLabels = heroFamily.markets.map((market, index) => {
+      const explicitLabel = heroFamily.labels?.[index];
+      return getQuestion(market) || explicitLabel || `Market ${index + 1}`;
+    });
     const c = strikeChart.current;
-    c.data.labels = heroFamily.labels;
+    c.$rawLabels = rawLabels;
+    c.data.labels = rawLabels;
     c.data.datasets[0].data = envelope;
     c.data.datasets[1].data = prices;
     c.data.datasets[1].pointBackgroundColor = colors;
     c.data.datasets[1].pointBorderColor = colors;
+    c.options.plugins.tooltip.callbacks.title = (items) => {
+      if (!items.length) return "";
+      return c.$rawLabels?.[items[0].dataIndex] ?? items[0].label;
+    };
+    c.options.scales.x.ticks.maxTicksLimit =
+      heroFamily.type === "Mutex set" ? 8 : 12;
     c.update();
   }, [heroFamily]);
 
@@ -696,6 +769,18 @@ export default function PolymarketRelativeValueTerminal() {
   });
   const filtersActive =
     normalizedQuery !== "" || statusFilter !== "all" || typeFilter !== "all";
+  const strikeAxisLabels =
+    heroFamily?.markets?.map((market, index) => {
+      const fullLabel =
+        getQuestion(market) ||
+        heroFamily.labels?.[index] ||
+        `Market ${index + 1}`;
+      const shortLabel = heroFamily.labels?.[index] || fullLabel;
+      return {
+        full: fullLabel,
+        short: truncateAxisLabel(shortLabel),
+      };
+    }) ?? [];
 
   // ── Live spread economics (computed from book data) ──
   let spreadCalc = null;
@@ -766,18 +851,7 @@ export default function PolymarketRelativeValueTerminal() {
         ? "text-amber-600"
         : "text-muted-foreground";
 
-  function violationText() {
-    if (!heroFamily?.dislocation) return null;
-    const { violatingPair, rawDislocation } = heroFamily.dislocation;
-    if (!violatingPair || rawDislocation <= 0) return null;
-    const [low, high] = violatingPair;
-    const pHigh = (high.yesPrice * 100).toFixed(1);
-    const pLow = (low.yesPrice * 100).toFixed(1);
-    const pp = (rawDislocation * 100).toFixed(1);
-    return `${getQuestion(high).slice(0, 50)} = ${pHigh}¢ but ${getQuestion(low).slice(0, 50)} = ${pLow}¢ — ${pp}pp violation`;
-  }
-
-  const alertText = violationText();
+  const violationAlert = buildViolationAlert(heroFamily);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1052,17 +1126,36 @@ export default function PolymarketRelativeValueTerminal() {
                     {heroFamily?.dislocation?.constraintDesc ??
                       "Select a family from the scanner"}
                   </p>
-                  {alertText && (
-                    <p className="mt-4 flex items-start gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
-                      <span className="shrink-0 mt-px">⚠</span>
-                      {alertText}
-                    </p>
+                  {violationAlert && (
+                    <div className="mt-4 rounded-2xl border border-red-100 bg-red-50/90 px-4 py-3 text-red-700">
+                      <div className="flex items-start gap-3">
+                        <span className="mt-0.5 shrink-0 text-base leading-none">
+                          ⚠
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">
+                            {violationAlert.eyebrow}
+                          </p>
+                          <p className="mt-1 text-sm font-medium leading-6 text-red-700">
+                            {violationAlert.summary}
+                          </p>
+                          <p className="text-sm leading-6 text-red-600">
+                            {violationAlert.detail}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
                 <div className="min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    {sigmaLabel ? "Sigma score" : "Price deviation"}
-                  </p>
+                  <div className="flex items-center justify-between gap-2 lg:justify-end">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      {sigmaLabel ? "Sigma score" : "Price deviation"}
+                    </p>
+                    {sigmaLabel && (
+                      <Tooltip text="Sigma score shows how many standard deviations the current gap sits above its 30-day trailing average. A reading of 2σ or higher is Actionable, 1.5σ to 2σ is Watchlist, and below 1.5σ is Normal." />
+                    )}
+                  </div>
                   <p
                     className={`mt-2 text-4xl font-bold tracking-[-0.06em] tabular-nums ${sigmaLabel ? sigmaCls : (heroFamily?.severityCls ?? "")}`}
                   >
@@ -1091,6 +1184,22 @@ export default function PolymarketRelativeValueTerminal() {
               <div className="relative h-72">
                 <canvas ref={strikeChartRef} />
               </div>
+              {strikeAxisLabels.length > 0 && (
+                <div
+                  className="mt-3 grid items-start gap-2"
+                  style={{
+                    gridTemplateColumns: `repeat(${strikeAxisLabels.length}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {strikeAxisLabels.map((label) => (
+                    <AxisLabel
+                      key={label.full}
+                      fullLabel={label.full}
+                      shortLabel={label.short}
+                    />
+                  ))}
+                </div>
+              )}
 
               {/* Legend */}
               <div className="mt-4 flex flex-wrap gap-5 text-xs text-muted-foreground">
@@ -1150,7 +1259,7 @@ export default function PolymarketRelativeValueTerminal() {
           </section>
 
           {/* ── Stats bar ── */}
-          <div className="glass-panel grid grid-cols-2 overflow-hidden md:grid-cols-4">
+          <div className="glass-panel grid grid-cols-2 md:grid-cols-4">
             <StatCell
               label="Markets in family"
               value={heroFamily ? String(heroFamily.markets.length) : "—"}
