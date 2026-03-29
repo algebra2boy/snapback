@@ -320,17 +320,17 @@ This can cut CLOB API calls by 60–80% in practice.
 
 ## Current Status
 
-The UI is fully implemented as a prototype with hardcoded seed data. The next build phase is wiring in live data:
-
 | Feature | Status |
 |---|---|
 | Dislocation Scanner UI | Complete |
 | Strike Ladder Visualizer | Complete |
 | Spread Builder + P&L model | Complete |
-| Gamma `/events` integration | Not implemented |
-| CLOB `/prices-history` integration | Not implemented |
-| CLOB `/book` depth integration | Not implemented |
-| WebSocket live updates | Not implemented |
+| Gamma `/events` integration | Complete — `fetchEvents()` + `fetchFamilies()` in `src/lib/gammaApi.js` |
+| CLOB `/prices-history` integration | Complete — `fetchPriceHistory()` in `src/lib/clobApi.js`, wired to 48h history chart |
+| CLOB `/book` depth integration | Complete — `fetchOrderBook()` in `src/lib/clobApi.js`, drives live sizing and friction in Spread Builder |
+| σ normalization (severity score) | Complete — `computeSigmaScore()` in `src/lib/analytics.js`; fetches 30d daily history via `fetch30dHistory()`, replaces raw % pts in hero signal box and stats bar |
+| PIT backtest + LOO evidence layer | Complete — `runBacktest()` in `src/lib/analytics.js`; point-in-time episode detection, LOO win rate, median/P25/worst P&L all live in Spread Builder evidence section |
+| WebSocket live updates | Not implemented — prices refresh only on page load; requires CLOB WebSocket for streaming |
 
 ---
 

@@ -1,12 +1,26 @@
 // Polymarket Gamma API integration
 // Docs: gamma-api.polymarket.com/events + gamma-api.polymarket.com/markets
 
-const GAMMA_BASE = "https://gamma-api.polymarket.com";
+const GAMMA_BASE = import.meta.env.PROD
+  ? "https://gamma-api.polymarket.com"
+  : "/api/gamma";
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
 
 export function getQuestion(market) {
   return market.question || market.groupItemTitle || market.title || "";
+}
+
+// Returns the YES-outcome CLOB token ID for a market, or null if unavailable.
+export function getClobTokenId(market) {
+  try {
+    const ids = Array.isArray(market.clobTokenIds)
+      ? market.clobTokenIds
+      : JSON.parse(market.clobTokenIds || "[]");
+    return ids[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseYesPrice(market) {
@@ -41,12 +55,51 @@ function formatStrike(val) {
   return `$${val}`;
 }
 
-const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 function extractMonthIndex(question) {
   const q = question.toLowerCase();
-  const short = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
-  const long  = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  const short = [
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+  ];
+  const long = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
   for (let i = 0; i < 12; i++) {
     if (q.includes(long[i]) || q.includes(short[i])) return i;
   }
@@ -56,15 +109,17 @@ function extractMonthIndex(question) {
 // ── Family classification ─────────────────────────────────────────────────────
 
 export function classifyFamilyType(markets) {
-  const questions = markets.map(m => getQuestion(m).toLowerCase());
+  const questions = markets.map((m) => getQuestion(m).toLowerCase());
 
   // Strike ladder: 2+ markets with numeric price thresholds ($80k, $90k, etc.)
-  const strikeCount = questions.filter(q => /\$[\d,]+\s*[km]?\b/.test(q)).length;
+  const strikeCount = questions.filter((q) =>
+    /\$[\d,]+\s*[km]?\b/.test(q),
+  ).length;
   if (strikeCount >= 2) return "Strike ladder";
 
   // Expiry curve: 2+ markets whose titles differ only by month/date
   const monthSet = new Set(
-    questions.map(q => extractMonthIndex(q)).filter(i => i >= 0)
+    questions.map((q) => extractMonthIndex(q)).filter((i) => i >= 0),
   );
   if (monthSet.size >= 2) return "Expiry curve";
 
@@ -80,15 +135,17 @@ export function classifyFamilyType(markets) {
 // rawDislocation is in [0, 1] — percentage points expressed as decimal (0.04 = 4pp)
 export function computeDislocation(markets, familyType) {
   const priced = markets
-    .map(m => ({ ...m, yesPrice: parseYesPrice(m) }))
-    .filter(m => m.yesPrice > 0.01 && m.yesPrice < 0.99);
+    .map((m) => ({ ...m, yesPrice: parseYesPrice(m) }))
+    .filter((m) => m.yesPrice > 0.01 && m.yesPrice < 0.99);
 
   if (priced.length < 2) return null;
 
   // ── Strike ladder ──
   if (familyType === "Strike ladder") {
     const sorted = [...priced].sort(
-      (a, b) => (extractStrike(getQuestion(a)) ?? 0) - (extractStrike(getQuestion(b)) ?? 0)
+      (a, b) =>
+        (extractStrike(getQuestion(a)) ?? 0) -
+        (extractStrike(getQuestion(b)) ?? 0),
     );
 
     let maxViolation = 0;
@@ -103,7 +160,9 @@ export function computeDislocation(markets, familyType) {
       }
     }
 
-    const labels = sorted.map(m => formatStrike(extractStrike(getQuestion(m))));
+    const labels = sorted.map((m) =>
+      formatStrike(extractStrike(getQuestion(m))),
+    );
     return {
       rawDislocation: maxViolation,
       violatingPair,
@@ -116,7 +175,8 @@ export function computeDislocation(markets, familyType) {
   // ── Expiry curve ──
   if (familyType === "Expiry curve") {
     const sorted = [...priced].sort(
-      (a, b) => extractMonthIndex(getQuestion(a)) - extractMonthIndex(getQuestion(b))
+      (a, b) =>
+        extractMonthIndex(getQuestion(a)) - extractMonthIndex(getQuestion(b)),
     );
 
     let maxViolation = 0;
@@ -131,7 +191,7 @@ export function computeDislocation(markets, familyType) {
       }
     }
 
-    const labels = sorted.map(m => {
+    const labels = sorted.map((m) => {
       const idx = extractMonthIndex(getQuestion(m));
       return idx >= 0 ? MONTH_NAMES[idx] : getQuestion(m).slice(0, 8);
     });
@@ -141,9 +201,10 @@ export function computeDislocation(markets, familyType) {
       violatingPair,
       sorted,
       labels,
-      constraintDesc: labels.length >= 2
-        ? `P(by ${labels[0]}) ≤ P(by ${labels[labels.length - 1]})`
-        : "",
+      constraintDesc:
+        labels.length >= 2
+          ? `P(by ${labels[0]}) ≤ P(by ${labels[labels.length - 1]})`
+          : "",
     };
   }
 
@@ -153,12 +214,15 @@ export function computeDislocation(markets, familyType) {
     const overpricing = Math.max(0, sum - 1.0);
     const sorted = [...priced].sort((a, b) => b.yesPrice - a.yesPrice);
 
+    // violatingPair = the two most overpriced outcomes — best NO candidates
+    const violatingPair = sorted.length >= 2 ? [sorted[0], sorted[1]] : null;
+
     return {
       rawDislocation: overpricing,
       sum,
-      violatingPair: null,
+      violatingPair,
       sorted,
-      labels: sorted.map(m => getQuestion(m).slice(0, 22)),
+      labels: sorted.map((m) => getQuestion(m).slice(0, 22)),
       constraintDesc: `Σ outcomes ≈ 1.00 (current: ${sum.toFixed(2)})`,
     };
   }
@@ -194,20 +258,20 @@ export function getStatus(rawDislocation) {
 
 export const TYPE_CLS = {
   "Strike ladder": "bg-violet-100 text-violet-800",
-  "Expiry curve":  "bg-emerald-100 text-emerald-900",
-  "Mutex set":     "bg-orange-100 text-orange-900",
+  "Expiry curve": "bg-emerald-100 text-emerald-900",
+  "Mutex set": "bg-orange-100 text-orange-900",
 };
 
 export const STATUS_CLS = {
   Actionable: "bg-emerald-100 text-emerald-800",
-  Watchlist:  "bg-amber-100 text-amber-800",
-  Normal:     "",
+  Watchlist: "bg-amber-100 text-amber-800",
+  Normal: "",
 };
 
 export const SEVERITY_CLS = {
   Actionable: "text-emerald-600",
-  Watchlist:  "text-amber-600",
-  Normal:     "text-muted-foreground",
+  Watchlist: "text-amber-600",
+  Normal: "text-muted-foreground",
 };
 
 // ── Seed fallback data ────────────────────────────────────────────────────────
@@ -244,17 +308,34 @@ export const SEED_ROWS = [
   },
 ];
 
+// ── Raw event fetch ───────────────────────────────────────────────────────────
+
+/**
+ * Fetch raw events from the Gamma API.
+ * @param {object} opts
+ * @param {boolean} opts.active   - Filter to active events only (default true)
+ * @param {boolean} opts.closed   - Include closed events (default false)
+ * @param {number}  opts.limit    - Max events to return (default 1000)
+ * @returns {Promise<Array>} Raw event objects with nested markets[]
+ */
+export async function fetchEvents({
+  active = true,
+  closed = false,
+  limit = 1000,
+} = {}) {
+  const params = new URLSearchParams({ active, closed, limit });
+  const res = await fetch(`${GAMMA_BASE}/events?${params}`, {
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) throw new Error(`Gamma /events returned ${res.status}`);
+  const raw = await res.json();
+  return Array.isArray(raw) ? raw : (raw.events ?? []);
+}
+
 // ── Main fetch ────────────────────────────────────────────────────────────────
 
 export async function fetchFamilies() {
-  const res = await fetch(
-    `${GAMMA_BASE}/events?active=true&closed=false&limit=100`,
-    { signal: AbortSignal.timeout(8_000) }
-  );
-  if (!res.ok) throw new Error(`Gamma /events returned ${res.status}`);
-
-  const raw = await res.json();
-  const events = Array.isArray(raw) ? raw : raw.events ?? [];
+  const events = await fetchEvents();
 
   const rows = [];
 
@@ -263,7 +344,7 @@ export async function fetchFamilies() {
 
     // Only active, liquid markets
     const active = event.markets.filter(
-      m => m.active && !m.closed && parseFloat(m.volume ?? 0) > 500
+      (m) => m.active && !m.closed && parseFloat(m.volume ?? 0) > 500,
     );
     if (active.length < 2) continue;
 
