@@ -31,6 +31,7 @@ const PNL_DATA = REPAIR_PCTS.map((r) => {
   const legB = 172 * (r / 100);
   return Math.round((legA + legB - 4.82) * 100) / 100;
 });
+const SCANNER_PAGE_SIZE = 10;
 
 const STATUS_FILTERS = ["all", "Actionable", "Watchlist", "Normal"];
 const TYPE_FILTERS = ["all", "Strike ladder", "Expiry curve", "Mutex set"];
@@ -43,23 +44,23 @@ const GLOSSARY = [
   },
   {
     term: "Dislocation",
-    def: "When prices inside a family violate their constraint — e.g. P(BTC > $100k) > P(BTC > $90k), which is impossible since $100k is harder to reach. The size in % pts is how far outside the constraint the prices sit.",
+    def: "When prices inside a family break their logical ordering — for example, when a harder BTC target trades above an easier one. The size in points shows how far outside the rule the prices have moved.",
   },
   {
-    term: "% pts (pp)",
-    def: "Percentage points — the raw gap between two prices. A 4 % pt dislocation means the prices are 4 cents apart on a 0–100¢ scale when they should not be.",
+    term: "Points",
+    def: "The raw gap between two prices. A 4-point dislocation means the prices are 4 cents apart on a 0 to 100 cent scale when they should not be.",
   },
   {
     term: "Actionable",
-    def: "Dislocation is ≥ 4 % pts — large enough to likely cover transaction costs and leave positive expected value after the spread closes.",
+    def: "The dislocation is 4 points or more — large enough to likely cover transaction costs and still leave a margin after the spread closes.",
   },
   {
     term: "Watchlist",
-    def: "Dislocation is 2-4 % pts — notable but may not clear friction costs. Worth monitoring for it to grow before trading.",
+    def: "The dislocation is between 2 and 4 points — notable, but it may not clear friction costs yet. Worth monitoring before trading.",
   },
   {
     term: "Normal",
-    def: "Dislocation is < 2 % pts — within typical noise. No trade recommended.",
+    def: "The dislocation is under 2 points — within typical noise. No trade recommended.",
   },
   {
     term: "Strike ladder",
@@ -67,11 +68,11 @@ const GLOSSARY = [
   },
   {
     term: "Expiry curve",
-    def: "Markets with the same outcome but different deadlines (e.g. Fed holds by May / June / July). A nearer deadline resolving YES implies the further one also resolves YES, so the near price must be ≤ the far price.",
+    def: "Markets with the same outcome but different deadlines (e.g. Fed holds by May / June / July). If the near date resolves yes, the later one must also resolve yes, so the near market should never trade above the later one.",
   },
   {
-    term: "No-arb envelope",
-    def: "The theoretical maximum price each market can have without creating a risk-free arbitrage against its neighbours. Points above this line are the violation.",
+    term: "No-arbitrage ceiling",
+    def: "The maximum price each market can have without creating a risk-free arbitrage against its neighbours. Points above this line are the violation.",
   },
 ];
 
@@ -720,15 +721,32 @@ function buildViolationAlert(family) {
   const { violatingPair, rawDislocation } = family.dislocation;
   if (!violatingPair || rawDislocation <= 0) return null;
 
+  const gap = (rawDislocation * 100).toFixed(1);
+
+  // ── Mutex set: violation is Σ YES > 1.00, not an ordering inversion ──
+  if (family.type === "Mutex set") {
+    const sum = family.dislocation.sum ?? 0;
+    const [topLeg, secondLeg] = violatingPair;
+    const topLabel = simplifyMarketLabel(getQuestion(topLeg));
+    const secondLabel = simplifyMarketLabel(getQuestion(secondLeg));
+    const topPrice = (topLeg.yesPrice * 100).toFixed(1);
+    const secondPrice = (secondLeg.yesPrice * 100).toFixed(1);
+    return {
+      eyebrow: `${gap} pt sum overrun`,
+      summary: `Outcomes sum to ${(sum * 100).toFixed(1)}¢ — ${gap} pts above the 100¢ ceiling.`,
+      detail: `Top two: ${topLabel} at ${topPrice}¢, ${secondLabel} at ${secondPrice}¢. Buy NO on the most overpriced outcomes to capture the gap.`,
+    };
+  }
+
+  // ── Strike ladder / Expiry curve: ordering inversion ──
   const [lowerLeg, upperLeg] = violatingPair;
   const upperPrice = (upperLeg.yesPrice * 100).toFixed(1);
   const lowerPrice = (lowerLeg.yesPrice * 100).toFixed(1);
-  const gap = (rawDislocation * 100).toFixed(1);
   const upperLabel = simplifyMarketLabel(getQuestion(upperLeg));
   const lowerLabel = simplifyMarketLabel(getQuestion(lowerLeg));
 
   return {
-    eyebrow: `${gap}pp ordering break`,
+    eyebrow: `${gap} point ordering break`,
     summary: `${upperLabel} is trading at ${upperPrice}¢.`,
     detail: `${lowerLabel} is still at ${lowerPrice}¢, even though this family should be ordered the other way around.`,
   };
@@ -760,6 +778,8 @@ export default function PolymarketRelativeValueTerminal() {
   const [bookLoading, setBookLoading] = useState(false);
   const [analyticsData, setAnalyticsData] = useState(null); // { sigma, backtest }
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [glossaryOpen, setGlossaryOpen] = useState(true);
+  const [chartPointLimit, setChartPointLimit] = useState("all"); // "all" | number
 
   // ── Fetch Gamma families ──
   useEffect(() => {
@@ -942,7 +962,7 @@ export default function PolymarketRelativeValueTerminal() {
         labels: [],
         datasets: [
           {
-            label: "No-arb upper bound",
+            label: "No-arbitrage ceiling",
             data: [],
             borderColor: "rgba(31,158,117,0.25)",
             backgroundColor: "rgba(31,158,117,0.05)",
@@ -1020,7 +1040,7 @@ export default function PolymarketRelativeValueTerminal() {
     pnlChart.current = new Chart(pnlChartRef.current, {
       type: "line",
       data: {
-        labels: REPAIR_PCTS.map((r) => `${r}pp`),
+        labels: REPAIR_PCTS.map((r) => `${r} pts`),
         datasets: [
           {
             label: "Net P&L after fees",
@@ -1138,18 +1158,63 @@ export default function PolymarketRelativeValueTerminal() {
     };
   }, []);
 
-  // ── Update strike chart on heroFamily change ──
+  // ── Reset chart point limit when hero family changes ──
+  useEffect(() => {
+    if (!heroFamily) return;
+    const count = heroFamily.markets?.length ?? 0;
+    // Auto-select a reasonable default: show all if ≤12, else top 10
+    setChartPointLimit(count <= 12 ? "all" : 10);
+  }, [heroFamily]);
+
+  // ── Update strike chart on heroFamily + chartPointLimit change ──
   useEffect(() => {
     if (!strikeChart.current || !heroFamily?.markets.length) return;
-    const prices = heroFamily.markets.map((m) => m.yesPrice * 100);
-    const envelope = computeNoArbEnvelope(prices);
-    const colors = prices.map((p, i) =>
-      p > envelope[i] ? "#FF5000" : "#378ADD",
-    );
-    const rawLabels = heroFamily.markets.map((market, index) => {
+
+    const allPrices = heroFamily.markets.map((m) => m.yesPrice * 100);
+    const allEnvelope = computeNoArbEnvelope(allPrices);
+    const allLabels = heroFamily.markets.map((market, index) => {
       const explicitLabel = heroFamily.labels?.[index];
       return getQuestion(market) || explicitLabel || `Market ${index + 1}`;
     });
+
+    // Determine which indices to show
+    let visibleIndices;
+    const limit =
+      chartPointLimit === "all" ? allPrices.length : chartPointLimit;
+
+    if (limit >= allPrices.length) {
+      visibleIndices = allPrices.map((_, i) => i);
+    } else {
+      // Always include violation points + first + last, then sample evenly
+      const violationIdx = new Set();
+      allPrices.forEach((p, i) => {
+        if (p > allEnvelope[i]) violationIdx.add(i);
+      });
+      violationIdx.add(0);
+      violationIdx.add(allPrices.length - 1);
+
+      const remaining = limit - violationIdx.size;
+      if (remaining > 0) {
+        const candidates = [];
+        for (let i = 0; i < allPrices.length; i++) {
+          if (!violationIdx.has(i)) candidates.push(i);
+        }
+        // Evenly sample from candidates
+        const step = candidates.length / remaining;
+        for (let j = 0; j < remaining && j < candidates.length; j++) {
+          violationIdx.add(candidates[Math.round(j * step)]);
+        }
+      }
+      visibleIndices = [...violationIdx].sort((a, b) => a - b).slice(0, limit);
+    }
+
+    const prices = visibleIndices.map((i) => allPrices[i]);
+    const envelope = visibleIndices.map((i) => allEnvelope[i]);
+    const rawLabels = visibleIndices.map((i) => allLabels[i]);
+    const colors = prices.map((p, i) =>
+      p > envelope[i] ? "#FF5000" : "#378ADD",
+    );
+
     const c = strikeChart.current;
     c.$rawLabels = rawLabels;
     c.data.labels = rawLabels;
@@ -1164,7 +1229,7 @@ export default function PolymarketRelativeValueTerminal() {
     c.options.scales.x.ticks.maxTicksLimit =
       heroFamily.type === "Mutex set" ? 8 : 12;
     c.update();
-  }, [heroFamily]);
+  }, [heroFamily, chartPointLimit]);
 
   // ── Update history chart on clobHistory change ──
   useEffect(() => {
@@ -1270,18 +1335,80 @@ export default function PolymarketRelativeValueTerminal() {
   });
   const filtersActive =
     normalizedQuery !== "" || statusFilter !== "all" || typeFilter !== "all";
-  const strikeAxisLabels =
-    heroFamily?.markets?.map((market, index) => {
-      const fullLabel =
-        getQuestion(market) ||
-        heroFamily.labels?.[index] ||
-        `Market ${index + 1}`;
-      const shortLabel = heroFamily.labels?.[index] || fullLabel;
-      return {
-        full: fullLabel,
-        short: truncateAxisLabel(shortLabel),
-      };
-    }) ?? [];
+  const totalScannerPages = Math.max(
+    1,
+    Math.ceil(filteredRows.length / SCANNER_PAGE_SIZE),
+  );
+  const activeScannerPage = Math.min(scannerPage, totalScannerPages);
+  const pageStartIndex = (activeScannerPage - 1) * SCANNER_PAGE_SIZE;
+  const pagedRows = filteredRows.slice(
+    pageStartIndex,
+    pageStartIndex + SCANNER_PAGE_SIZE,
+  );
+  const visibleRangeStart = filteredRows.length ? pageStartIndex + 1 : 0;
+  const visibleRangeEnd = Math.min(
+    pageStartIndex + SCANNER_PAGE_SIZE,
+    filteredRows.length,
+  );
+  // Compute visible chart indices (mirrors the logic in the chart useEffect)
+  const chartVisibleIndices = (() => {
+    if (!heroFamily?.markets?.length) return [];
+    const allPrices = heroFamily.markets.map((m) => m.yesPrice * 100);
+    const allEnvelope = computeNoArbEnvelope(allPrices);
+    const limit =
+      chartPointLimit === "all" ? allPrices.length : chartPointLimit;
+    if (limit >= allPrices.length) return allPrices.map((_, i) => i);
+    const keep = new Set([0, allPrices.length - 1]);
+    allPrices.forEach((p, i) => {
+      if (p > allEnvelope[i]) keep.add(i);
+    });
+    const remaining = limit - keep.size;
+    if (remaining > 0) {
+      const cands = [];
+      for (let i = 0; i < allPrices.length; i++)
+        if (!keep.has(i)) cands.push(i);
+      const step = cands.length / remaining;
+      for (let j = 0; j < remaining && j < cands.length; j++)
+        keep.add(cands[Math.round(j * step)]);
+    }
+    return [...keep].sort((a, b) => a - b).slice(0, limit);
+  })();
+
+  const totalMarketCount = heroFamily?.markets?.length ?? 0;
+
+  // Build chart point-limit options: only show options that are smaller than total
+  const chartLimitOptions = (() => {
+    const opts = [];
+    for (const n of [5, 8, 10, 15, 20]) {
+      if (n < totalMarketCount) opts.push(n);
+    }
+    opts.push("all");
+    return opts;
+  })();
+
+  const strikeAxisLabels = chartVisibleIndices.map((i) => {
+    const market = heroFamily.markets[i];
+    const fullLabel =
+      getQuestion(market) || heroFamily?.labels?.[i] || `Market ${i + 1}`;
+    const shortLabel = heroFamily?.labels?.[i] || fullLabel;
+    return {
+      full: fullLabel,
+      short: truncateAxisLabel(shortLabel),
+    };
+  });
+
+  useEffect(() => {
+    setScannerPage(1);
+    setPageJumpValue("1");
+  }, [searchQuery, statusFilter, typeFilter]);
+
+  useEffect(() => {
+    if (scannerPage > totalScannerPages) {
+      setScannerPage(totalScannerPages);
+      return;
+    }
+    setPageJumpValue(String(activeScannerPage));
+  }, [scannerPage, totalScannerPages, activeScannerPage]);
 
   // ── Live spread economics (computed from book data) ──
   let spreadCalc = null;
@@ -1334,9 +1461,9 @@ export default function PolymarketRelativeValueTerminal() {
     };
   }
 
-  // ── σ display label ──
+  // ── Sigma display label ──
   const sigma = analyticsData?.sigma ?? null;
-  const sigmaLabel = sigma != null ? `${sigma.toFixed(2)}σ` : null;
+  const sigmaLabel = sigma != null ? sigma.toFixed(2) : null;
   const sigmaStatus =
     sigma == null
       ? null
@@ -1373,8 +1500,8 @@ export default function PolymarketRelativeValueTerminal() {
       {/* ── Top nav bar ── */}
       <header className="sticky top-0 z-20 border-b border-border/80 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-sm font-semibold text-white shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-slate-950 to-slate-800 text-sm font-semibold text-white shadow-md">
               S
             </div>
             <div>
@@ -1382,13 +1509,13 @@ export default function PolymarketRelativeValueTerminal() {
                 <span className="text-[15px] font-semibold tracking-tight">
                   Snapback
                 </span>
-                <span className="text-sm text-muted-foreground">
-                  No-arb Terminal
+                <span className="text-xs font-medium text-slate-500">
+                  Terminal
                 </span>
               </div>
-              <p className="hidden text-xs text-muted-foreground md:block">
-                Scan structurally linked markets, inspect the violated surface,
-                then price the corrective spread.
+              <p className="hidden text-xs text-muted-foreground md:block leading-tight">
+                Scan structurally linked markets, inspect violations, price
+                spreads
               </p>
             </div>
           </div>
@@ -1408,25 +1535,30 @@ export default function PolymarketRelativeValueTerminal() {
                 <span className="font-medium">
                   {loading ? "—" : scannerRows.length}
                 </span>
-              </span>
-              <span>
-                <span className="text-muted-foreground">Dislocations </span>
-                <span className="font-medium">
+              </div>
+              <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Dislocations
+                </span>
+                <span className="font-semibold text-slate-900">
                   {loading ? "—" : dislocatedCount}
                 </span>
-              </span>
-              <span>
-                <span className="text-muted-foreground">Actionable </span>
+              </div>
+              <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Actionable
+                </span>
                 <span
-                  className={`font-semibold ${actionableCount > 0 ? "text-emerald-600" : ""}`}
+                  className={`font-semibold ${actionableCount > 0 ? "text-emerald-700" : "text-slate-900"}`}
                 >
                   {loading ? "—" : actionableCount}
                 </span>
-              </span>
+              </div>
             </div>
             <FreshnessBadge dataAge={dataAge} isSeed={isSeed} />
             {loading && (
-              <span className="text-xs text-muted-foreground animate-pulse">
+              <span className="text-xs text-muted-foreground">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse mr-1" />
                 Fetching…
               </span>
             )}
@@ -1434,84 +1566,165 @@ export default function PolymarketRelativeValueTerminal() {
         </div>
       </header>
 
+      <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6">
+        <section className="scanner-command-bar">
+          <div className="scanner-command-copy">
+            <p className="scanner-command-eyebrow">Scanner search</p>
+            <p className="scanner-command-subtitle">
+              Search the ranked family list without breaking the main workspace.
+            </p>
+          </div>
+          <div className="scanner-command-actions">
+            <label className="scanner-search scanner-search-panel">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search families"
+                className="scanner-search-input"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="scanner-search-clear"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </label>
+            <div className="scanner-command-meta">
+              <span className="scanner-command-count">
+                {filteredRows.length} matching families
+              </span>
+              <span className="scanner-command-range">
+                {filteredRows.length
+                  ? `Showing ${visibleRangeStart}-${visibleRangeEnd}`
+                  : "No matches"}
+              </span>
+            </div>
+          </div>
+        </section>
+      </div>
+
       {/* ── Body: sidebar + main ── */}
       <div className="mx-auto flex min-h-[calc(100vh-64px)] max-w-[1440px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:px-8 lg:py-6">
         {/* ── Scanner sidebar ── */}
-        <aside className="glass-panel w-full shrink-0 overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100vh-112px)] lg:w-72">
+        <aside className="glass-panel w-full shrink-0 overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100vh-112px)] lg:w-72 flex flex-col">
           <div className="border-b border-border/80 px-5 py-4">
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Scanner
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Groups of linked markets ranked by how far their prices deviate
-              from logical constraints.
+              Groups of linked markets ranked by price deviation severity.
             </p>
           </div>
-          <div className="border-y border-border/80 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
+          <div className="border-b border-border/80 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 mb-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Filter scanner
+                Scanner view
               </p>
-              <span className="text-[11px] text-muted-foreground">
-                {filteredRows.length} shown
+              <span className="text-[11px] text-muted-foreground font-medium">
+                Page {activeScannerPage} of {totalScannerPages}
               </span>
             </div>
-            <div className="mt-3">
-              <label className="scanner-search">
-                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+            <div className="space-y-2.5">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
+                  Status
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {STATUS_FILTERS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setStatusFilter(option)}
+                      className={`scanner-filter-chip ${statusFilter === option ? "scanner-filter-chip-active" : ""}`}
+                    >
+                      {option === "all" ? "All statuses" : option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
+                  Type
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {TYPE_FILTERS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setTypeFilter(option)}
+                      className={`scanner-filter-chip ${typeFilter === option ? "scanner-filter-chip-active" : ""}`}
+                    >
+                      {option === "all"
+                        ? "All types"
+                        : option === "Strike ladder"
+                          ? "Strike"
+                          : option === "Expiry curve"
+                            ? "Expiry"
+                            : "Mutex"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="scanner-pagination mt-3">
+              <button
+                type="button"
+                onClick={() => setScannerPage((page) => Math.max(1, page - 1))}
+                disabled={activeScannerPage === 1}
+                className="scanner-pagination-button"
+              >
+                Previous
+              </button>
+              <form
+                className="scanner-pagination-jump"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const requestedPage = Number.parseInt(pageJumpValue, 10);
+                  if (Number.isNaN(requestedPage)) {
+                    setPageJumpValue(String(activeScannerPage));
+                    return;
+                  }
+                  const nextPage = Math.min(
+                    Math.max(requestedPage, 1),
+                    totalScannerPages,
+                  );
+                  setScannerPage(nextPage);
+                }}
+              >
                 <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Search families"
-                  className="scanner-search-input"
+                  type="number"
+                  min="1"
+                  max={String(totalScannerPages)}
+                  value={pageJumpValue}
+                  onChange={(event) => setPageJumpValue(event.target.value)}
+                  className="scanner-page-input"
+                  aria-label="Go to scanner page"
                 />
-                {searchQuery ? (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    className="scanner-search-clear"
-                    aria-label="Clear search"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
-              </label>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {STATUS_FILTERS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setStatusFilter(option)}
-                  className={`scanner-filter-chip ${statusFilter === option ? "scanner-filter-chip-active" : ""}`}
-                >
-                  {option === "all" ? "All statuses" : option}
-                </button>
-              ))}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {TYPE_FILTERS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setTypeFilter(option)}
-                  className={`scanner-filter-chip ${typeFilter === option ? "scanner-filter-chip-active" : ""}`}
-                >
-                  {option === "all"
-                    ? "All types"
-                    : option === "Strike ladder"
-                      ? "Strike"
-                      : option === "Expiry curve"
-                        ? "Expiry"
-                        : "Mutex"}
-                </button>
-              ))}
+                <span className="scanner-page-label">go</span>
+              </form>
+              <button
+                type="button"
+                onClick={() =>
+                  setScannerPage((page) =>
+                    Math.min(totalScannerPages, page + 1),
+                  )
+                }
+                disabled={activeScannerPage === totalScannerPages}
+                className="scanner-pagination-button"
+              >
+                Next
+              </button>
             </div>
             {filtersActive ? (
               <div className="mt-3 flex items-center justify-between gap-3">
                 <p className="text-[11px] text-muted-foreground">
-                  Filters are narrowing the ranked scanner view.
+                  Filters are narrowing the view.
                 </p>
                 <button
                   type="button"
@@ -1520,111 +1733,126 @@ export default function PolymarketRelativeValueTerminal() {
                     setStatusFilter("all");
                     setTypeFilter("all");
                   }}
-                  className="text-[11px] font-medium text-slate-700 transition hover:text-slate-950"
+                  className="text-[11px] font-medium text-blue-600 transition hover:text-blue-700"
                 >
-                  Clear filters
+                  Clear
                 </button>
               </div>
             ) : null}
           </div>
-          <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-372px)]">
-            {filteredRows.length ? (
-              filteredRows.map((row) => (
-                <button
-                  key={row.family}
-                  onClick={() => !row.isSeed && setHeroFamily(row)}
-                  className={`scanner-item w-full text-left px-4 py-3.5 ${
-                    heroFamily?.family === row.family
-                      ? "scanner-item-active"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium leading-snug text-slate-900">
-                      {row.family}
-                    </span>
-                    <span
-                      className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
-                      title="Price deviation in percentage points"
-                    >
-                      {row.severity.replace("pp", " % pts")}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span
-                      className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
-                      title={
-                        row.type === "Strike ladder"
-                          ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
-                          : row.type === "Expiry curve"
-                            ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones"
-                            : "Mutually exclusive outcomes — their probabilities must sum to ~100%"
-                      }
-                    >
-                      {row.type}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-1 text-[10px] font-medium ${
-                        row.status === "Actionable"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : row.status === "Watchlist"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-500"
-                      }`}
-                      title={
-                        row.status === "Actionable"
-                          ? "Gap ≥ 4 % pts — likely profitable after costs"
-                          : row.status === "Watchlist"
-                            ? "Gap 2–4 % pts — notable but may not clear transaction costs yet"
-                            : "Gap < 2 % pts — within normal noise, no trade"
-                      }
-                    >
-                      {row.status}
-                    </span>
-                  </div>
-                </button>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
-                <p>No scanner families match these filters.</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setStatusFilter("all");
-                    setTypeFilter("all");
-                  }}
-                  className="mt-2 font-medium text-slate-700 transition hover:text-slate-950"
-                >
-                  Clear filters
-                </button>
-              </div>
-            )}
-          </div>
-          {/* ── Glossary ── */}
-          <div className="border-t border-border/80 px-5 py-4">
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-              Glossary
-            </p>
-            <dl className="space-y-2">
-              {GLOSSARY.map(({ term, def }) => (
-                <div key={term}>
-                  <dt className="text-[11px] font-semibold text-slate-700">
-                    {term}
-                  </dt>
-                  <dd className="text-[11px] leading-relaxed text-muted-foreground">
-                    {def}
-                  </dd>
+          <div className="sidebar-scroll flex-1 overflow-y-auto">
+            <div className="space-y-2 p-3">
+              {pagedRows.length ? (
+                pagedRows.map((row) => (
+                  <button
+                    key={row.family}
+                    onClick={() => !row.isSeed && setHeroFamily(row)}
+                    className={`fade-in scanner-item w-full text-left px-4 py-3.5 rounded-lg transition-all ${
+                      heroFamily?.family === row.family
+                        ? "scanner-item-active bg-blue-50 border border-blue-200"
+                        : "hover:bg-slate-50 border border-transparent"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-sm font-semibold leading-snug text-slate-900">
+                        {row.family}
+                      </span>
+                      <span
+                        className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}
+                        title="Price deviation in percentage points"
+                      >
+                        {row.severity.replace("pp", " pts")}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600"
+                        title={
+                          row.type === "Strike ladder"
+                            ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper"
+                            : row.type === "Expiry curve"
+                              ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones"
+                              : "Mutually exclusive outcomes — their probabilities must sum to ~100%"
+                        }
+                      >
+                        {row.type}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-1 text-[10px] font-medium ${
+                          row.status === "Actionable"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : row.status === "Watchlist"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-slate-100 text-slate-500"
+                        }`}
+                        title={
+                          row.status === "Actionable"
+                            ? "Gap is 4 points or more — likely profitable after costs"
+                            : row.status === "Watchlist"
+                              ? "Gap is between 2 and 4 points — notable, but may not clear transaction costs yet"
+                              : "Gap is under 2 points — within normal noise, no trade"
+                        }
+                      >
+                        {row.status}
+                      </span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/65 px-4 py-5 text-sm text-muted-foreground">
+                  <p>No families match these filters.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setStatusFilter("all");
+                      setTypeFilter("all");
+                    }}
+                    className="mt-2 font-medium text-blue-600 transition hover:text-blue-700"
+                  >
+                    Clear filters
+                  </button>
                 </div>
-              ))}
-            </dl>
+              )}
+            </div>
+            {/* ── Glossary (collapsible) ── */}
+            <div className="border-t border-border/80">
+              <button
+                type="button"
+                onClick={() => setGlossaryOpen(!glossaryOpen)}
+                className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 transition"
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Glossary
+                </p>
+                <span
+                  className={`text-xs transition ${glossaryOpen ? "rotate-180" : ""}`}
+                >
+                  ▼
+                </span>
+              </button>
+              {glossaryOpen && (
+                <div className="px-5 pb-5 pt-3 border-t border-border/40">
+                  <dl className="space-y-2.5">
+                    {GLOSSARY.map(({ term, def }) => (
+                      <div key={term} className="text-[10px]">
+                        <dt className="font-semibold text-slate-700">{term}</dt>
+                        <dd className="leading-relaxed text-muted-foreground mt-0.5">
+                          {def}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
+            </div>
           </div>
         </aside>
 
         {/* ── Main content ── */}
         <main className="min-w-0 flex-1 space-y-4">
           {/* ── Family header + chart ── */}
-          <section className="px-8 pt-7 pb-6 border-b border-border">
+          <section className="fade-in px-8 pt-7 pb-6 border-b border-border">
             {/* Title row */}
             <div className="soft-grid border-b border-border/80 px-6 pb-6 pt-7 sm:px-8">
               <div className="mb-6 flex flex-col items-start justify-between gap-6 lg:flex-row">
@@ -1632,24 +1860,24 @@ export default function PolymarketRelativeValueTerminal() {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                     Selected market group
                   </p>
-                  <h2 className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.04em] text-slate-950">
+                  <h2 className="mt-3 text-2xl font-bold leading-tight tracking-[-0.04em] text-slate-950">
                     {heroFamily?.family ?? "—"}
                   </h2>
                   <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
                     {heroFamily?.dislocation?.constraintDesc ??
-                      "Select a family from the scanner"}
+                      "Select a family from the scanner to inspect"}
                   </p>
                   {violationAlert && (
-                    <div className="mt-4 rounded-2xl border border-red-100 bg-red-50/90 px-4 py-3 text-red-700">
+                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50/95 px-4 py-3 text-red-700 shadow-sm">
                       <div className="flex items-start gap-3">
-                        <span className="mt-0.5 shrink-0 text-base leading-none">
+                        <span className="mt-0.5 shrink-0 text-lg leading-none font-semibold">
                           ⚠
                         </span>
                         <div className="min-w-0">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-600">
                             {violationAlert.eyebrow}
                           </p>
-                          <p className="mt-1 text-sm font-medium leading-6 text-red-700">
+                          <p className="mt-1 text-sm font-semibold leading-6 text-red-700">
                             {violationAlert.summary}
                           </p>
                           <p className="text-sm leading-6 text-red-600">
@@ -1660,46 +1888,80 @@ export default function PolymarketRelativeValueTerminal() {
                     </div>
                   )}
                 </div>
-                <div className="min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
-                  <div className="flex items-center justify-between gap-2 lg:justify-end">
+                <div className="min-w-[160px] rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white/95 to-slate-50/50 px-6 py-5 text-left shadow-sm lg:text-right">
+                  <div className="flex items-center justify-between gap-2 lg:justify-end mb-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      {sigmaLabel ? "Sigma score" : "Price deviation"}
+                      {sigmaLabel ? "Sigma score" : "Gap"}
                     </p>
                     {sigmaLabel && (
-                      <Tooltip text="Sigma score shows how many standard deviations the current gap sits above its 30-day trailing average. A reading of 2σ or higher is Actionable, 1.5σ to 2σ is Watchlist, and below 1.5σ is Normal." />
+                      <Tooltip text="Sigma score shows how many standard deviations the current gap sits above its 30-day trailing average. A reading of 2 standard deviations or higher is Actionable, 1.5 to 2 is Watchlist, and below 1.5 is Normal." />
                     )}
                   </div>
                   <p
-                    className={`mt-2 text-4xl font-bold tracking-[-0.06em] tabular-nums ${sigmaLabel ? sigmaCls : (heroFamily?.severityCls ?? "")}`}
+                    className={`text-4xl font-bold tracking-[-0.06em] tabular-nums ${sigmaLabel ? sigmaCls : (heroFamily?.severityCls ?? "")}`}
                   >
                     {sigmaLabel ??
                       (heroFamily
                         ? heroFamily.severity.replace("pp", "")
                         : "—")}
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    {sigmaLabel ? "standard deviations" : "percentage points"}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {sigmaLabel ? "std devs" : "pts"}
                   </p>
                   {!sigmaLabel && heroFamily && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {analyticsLoading
-                        ? "Computing σ…"
-                        : "raw gap · σ pending"}
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {analyticsLoading ? "Computing sigma…" : "sigma pending"}
                     </p>
                   )}
-                  <p className="mt-1 text-sm font-medium">
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
                     {sigmaStatus ?? heroFamily?.status ?? "—"}
                   </p>
                 </div>
               </div>
 
-              {/* Chart */}
-              <div className="relative h-72">
-                <canvas ref={strikeChartRef} />
+              {/* Chart — with inline point-limit filter in top-right corner */}
+              <div className="chart-container rounded-xl border border-slate-200/80 bg-white/50 backdrop-blur-sm overflow-hidden">
+                {/* Chart toolbar */}
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Price surface
+                  </span>
+                  {chartLimitOptions.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      {chartPointLimit !== "all" && (
+                        <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">
+                          Violations always shown ·
+                        </span>
+                      )}
+                      <div className="flex gap-1">
+                        {chartLimitOptions.map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => setChartPointLimit(opt)}
+                            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all duration-150 ${
+                              chartPointLimit === opt
+                                ? "border-blue-200 bg-blue-50 text-blue-600 shadow-sm"
+                                : "border-slate-200/80 bg-white/60 text-slate-500 hover:border-slate-300 hover:bg-white hover:text-slate-700"
+                            }`}
+                          >
+                            {opt === "all"
+                              ? `All ${totalMarketCount}`
+                              : `${opt}`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Canvas */}
+                <div className="relative h-72 p-4">
+                  <canvas ref={strikeChartRef} />
+                </div>
               </div>
               {strikeAxisLabels.length > 0 && (
                 <div
-                  className="mt-3 grid items-start gap-2"
+                  className="mt-4 grid items-start gap-2"
                   style={{
                     gridTemplateColumns: `repeat(${strikeAxisLabels.length}, minmax(0, 1fr))`,
                   }}
@@ -1715,34 +1977,46 @@ export default function PolymarketRelativeValueTerminal() {
               )}
 
               {/* Legend */}
-              <div className="mt-4 flex flex-wrap gap-5 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <span className="size-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/30" />
-                  No-arb envelope
+              <div className="mt-5 flex flex-wrap gap-5 text-xs text-muted-foreground">
+                <span className="flex items-center gap-2">
+                  <span className="size-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/40" />
+                  <span className="font-medium text-slate-700">
+                    No-arbitrage ceiling
+                  </span>
                 </span>
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-2">
                   <span className="size-2.5 rounded-full bg-[#378ADD]" />
-                  Market price
+                  <span className="font-medium text-slate-700">
+                    Market price
+                  </span>
                 </span>
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-2">
                   <span className="size-2.5 rounded-full bg-[#FF5000]" />
-                  Violation
+                  <span className="font-medium text-slate-700">Violation</span>
                 </span>
               </div>
             </div>
           </section>
 
           {/* ── CLOB price history (48h) ── */}
-          <section className="px-8 py-6 border-b border-border">
+          <section className="fade-in px-8 py-6 border-b border-border">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-semibold">Price history · 48h</p>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Price history
+                </p>
+                <p className="text-sm font-semibold mt-1">
+                  Market spread over time
+                </p>
+              </div>
               {clobLoading && (
-                <span className="text-xs text-muted-foreground animate-pulse">
-                  Loading CLOB history…
+                <span className="text-xs text-muted-foreground">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse mr-1" />
+                  Loading…
                 </span>
               )}
               {!clobLoading && clobHistory && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-slate-500">
                   via CLOB /prices-history
                 </span>
               )}
@@ -1750,19 +2024,19 @@ export default function PolymarketRelativeValueTerminal() {
                 !clobHistory &&
                 !heroFamily?.isSeed &&
                 heroFamily && (
-                  <span className="text-xs text-red-400">
-                    CLOB history unavailable
+                  <span className="text-xs text-red-500 font-medium">
+                    Unavailable
                   </span>
                 )}
             </div>
-            <div className="relative h-52">
+            <div className="chart-container relative h-52 rounded-xl border border-slate-200/80 bg-white/50 p-4 backdrop-blur-sm">
               {/* Canvas is always mounted so Chart.js can bind; content driven by clobHistory */}
               <canvas
                 ref={historyChartRef}
                 className={clobHistory ? "" : "opacity-0"}
               />
               {!clobHistory && !clobLoading && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground rounded-lg">
                   {heroFamily && !heroFamily.isSeed
                     ? "No CLOB history data"
                     : "Select a live family to view history"}
@@ -1772,7 +2046,7 @@ export default function PolymarketRelativeValueTerminal() {
           </section>
 
           {/* ── Stats bar ── */}
-          <div className="glass-panel grid grid-cols-2 md:grid-cols-4">
+          <div className="glass-panel grid grid-cols-2 md:grid-cols-4 rounded-xl">
             <StatCell
               label="Markets in family"
               value={heroFamily ? String(heroFamily.markets.length) : "—"}
@@ -1789,7 +2063,7 @@ export default function PolymarketRelativeValueTerminal() {
               label="Price deviation"
               value={
                 heroFamily
-                  ? `${(heroFamily.rawDislocation * 100).toFixed(1)} % pts`
+                  ? `${(heroFamily.rawDislocation * 100).toFixed(1)} pts`
                   : "—"
               }
               valueCls={heroFamily?.severityCls}
@@ -1797,27 +2071,27 @@ export default function PolymarketRelativeValueTerminal() {
               border
             />
             <StatCell
-              label={sigmaLabel ? "σ score" : "Signal strength"}
+              label={sigmaLabel ? "Sigma score" : "Signal strength"}
               value={
                 sigmaLabel
                   ? `${sigmaLabel} · ${sigmaStatus}`
                   : (heroFamily?.status ?? "—")
               }
               valueCls={sigmaLabel ? sigmaCls : undefined}
-              tooltip="σ = how many standard deviations the gap sits above its 30-day trailing average. ≥ 2σ = Actionable, 1.5–2σ = Watchlist, < 1.5σ = Normal. Raw % pts shown until 30d history loads."
+              tooltip="Sigma score shows how many standard deviations the gap sits above its 30-day trailing average. 2 or more is Actionable, 1.5 to 2 is Watchlist, and below 1.5 is Normal. Raw points are shown until 30-day history loads."
               border={false}
             />
           </div>
 
           {/* ── Spread builder ── */}
-          <section className="glass-panel overflow-hidden">
-            <div className="border-b border-border/80 px-6 py-5 sm:px-8">
+          <section className="fade-in glass-panel overflow-hidden rounded-xl">
+            <div className="border-b border-border/80 px-6 py-5 sm:px-8 bg-gradient-to-r from-white/50 to-slate-50/30">
               <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                     Spread builder
                   </p>
-                  <h3 className="mt-2 text-base font-semibold text-slate-950">
+                  <h3 className="mt-2 text-base font-bold text-slate-950">
                     Corrective spread
                   </h3>
                   <p className="mt-1 text-sm text-muted-foreground">
@@ -1827,16 +2101,17 @@ export default function PolymarketRelativeValueTerminal() {
                 </div>
                 <div className="flex items-center gap-2">
                   {bookLoading && (
-                    <span className="text-xs text-muted-foreground animate-pulse">
-                      Loading book…
+                    <span className="text-xs text-muted-foreground">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse mr-1" />
+                      Loading…
                     </span>
                   )}
                   {bookData && !bookLoading && (
-                    <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                    <span className="rounded-full border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
                       Live book
                     </span>
                   )}
-                  <Badge className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                  <Badge className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
                     Auto-generated
                   </Badge>
                 </div>
@@ -1847,19 +2122,32 @@ export default function PolymarketRelativeValueTerminal() {
               {/* ── Two legs ── */}
               <div className="grid gap-4 lg:grid-cols-2">
                 {/* Leg A */}
-                <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    {heroFamily?.type === "Mutex set"
-                      ? "Leg A · Buy NO"
-                      : "Leg A · Buy YES"}
-                  </p>
-                  <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
-                    {heroFamily?.dislocation?.violatingPair
-                      ? getQuestion(
-                          heroFamily.dislocation.violatingPair[0],
-                        ).slice(0, 50)
-                      : "BTC above $90k"}
-                  </p>
+                <div className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-white/90 to-slate-50/50 p-5 shadow-sm">
+                  <div className="mb-3 pb-3 border-b border-slate-100">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      {heroFamily?.type === "Mutex set"
+                        ? "Leg A · Buy NO"
+                        : "Leg A · Buy YES"}
+                    </p>
+                  </div>
+                  {(() => {
+                    const fullA = heroFamily?.dislocation?.violatingPair
+                      ? getQuestion(heroFamily.dislocation.violatingPair[0])
+                      : "BTC above $90k";
+                    const isTruncatedA = fullA.length > 50;
+                    return (
+                      <div className="group relative mb-4">
+                        <p className="text-base font-semibold leading-snug text-slate-950 cursor-default">
+                          {isTruncatedA ? `${fullA.slice(0, 50)}…` : fullA}
+                        </p>
+                        {isTruncatedA && (
+                          <div className="pointer-events-none absolute top-full left-0 z-50 mt-2 w-80 rounded-xl border border-border/80 bg-white px-3 py-2.5 text-[12px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.13)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                            {fullA}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="space-y-2.5 text-sm">
                     {[
                       [
@@ -1897,9 +2185,11 @@ export default function PolymarketRelativeValueTerminal() {
                         key={label}
                         className="flex items-center justify-between"
                       >
-                        <span className="text-muted-foreground">{label}</span>
+                        <span className="text-muted-foreground text-xs font-medium">
+                          {label}
+                        </span>
                         <span
-                          className={`font-medium ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
+                          className={`font-semibold tabular-nums ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
                         >
                           {val}
                         </span>
@@ -1907,21 +2197,23 @@ export default function PolymarketRelativeValueTerminal() {
                     ))}
                   </div>
                   {bookData && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                         {heroFamily?.type === "Mutex set"
                           ? "Depth (NO · implied)"
                           : "Depth (YES)"}
                       </p>
                       <div className="grid grid-cols-2 gap-x-3 text-[11px]">
                         <div>
-                          <p className="mb-1 text-muted-foreground">Bids</p>
+                          <p className="mb-1 text-muted-foreground text-xs">
+                            Bids
+                          </p>
                           {bookData.legA.bids.slice(0, 3).map((b, i) => (
                             <div
                               key={i}
-                              className="flex justify-between tabular-nums"
+                              className="flex justify-between tabular-nums text-xs"
                             >
-                              <span className="text-emerald-600">
+                              <span className="text-emerald-600 font-medium">
                                 {b.price.toFixed(3)}
                               </span>
                               <span className="text-muted-foreground">
@@ -1931,13 +2223,15 @@ export default function PolymarketRelativeValueTerminal() {
                           ))}
                         </div>
                         <div>
-                          <p className="mb-1 text-muted-foreground">Asks</p>
+                          <p className="mb-1 text-muted-foreground text-xs">
+                            Asks
+                          </p>
                           {bookData.legA.asks.slice(0, 3).map((a, i) => (
                             <div
                               key={i}
-                              className="flex justify-between tabular-nums"
+                              className="flex justify-between tabular-nums text-xs"
                             >
-                              <span className="text-red-500">
+                              <span className="text-red-500 font-medium">
                                 {a.price.toFixed(3)}
                               </span>
                               <span className="text-muted-foreground">
@@ -1951,17 +2245,30 @@ export default function PolymarketRelativeValueTerminal() {
                   )}
                 </div>
                 {/* Leg B */}
-                <div className="rounded-[28px] border border-slate-200/80 bg-white/84 p-5 shadow-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    Leg B · Buy NO
-                  </p>
-                  <p className="mb-4 mt-3 text-base font-medium leading-snug text-slate-950">
-                    {heroFamily?.dislocation?.violatingPair
-                      ? getQuestion(
-                          heroFamily.dislocation.violatingPair[1],
-                        ).slice(0, 50)
-                      : "BTC above $100k"}
-                  </p>
+                <div className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-white/90 to-slate-50/50 p-5 shadow-sm">
+                  <div className="mb-3 pb-3 border-b border-slate-100">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Leg B · Buy NO
+                    </p>
+                  </div>
+                  {(() => {
+                    const fullB = heroFamily?.dislocation?.violatingPair
+                      ? getQuestion(heroFamily.dislocation.violatingPair[1])
+                      : "BTC above $100k";
+                    const isTruncatedB = fullB.length > 50;
+                    return (
+                      <div className="group relative mb-4">
+                        <p className="text-base font-semibold leading-snug text-slate-950 cursor-default">
+                          {isTruncatedB ? `${fullB.slice(0, 50)}…` : fullB}
+                        </p>
+                        {isTruncatedB && (
+                          <div className="pointer-events-none absolute top-full left-0 z-50 mt-2 w-80 rounded-xl border border-border/80 bg-white px-3 py-2.5 text-[12px] leading-relaxed text-slate-700 shadow-[0_18px_48px_rgba(15,23,42,0.13)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                            {fullB}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="space-y-2.5 text-sm">
                     {[
                       [
@@ -1988,9 +2295,11 @@ export default function PolymarketRelativeValueTerminal() {
                         key={label}
                         className="flex items-center justify-between"
                       >
-                        <span className="text-muted-foreground">{label}</span>
+                        <span className="text-muted-foreground text-xs font-medium">
+                          {label}
+                        </span>
                         <span
-                          className={`font-medium ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
+                          className={`font-semibold tabular-nums ${label === "Max gain" ? "text-emerald-600" : "text-slate-900"}`}
                         >
                           {val}
                         </span>
@@ -1998,21 +2307,21 @@ export default function PolymarketRelativeValueTerminal() {
                     ))}
                   </div>
                   {bookData && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                         Depth (YES · implied NO)
                       </p>
                       <div className="grid grid-cols-2 gap-x-3 text-[11px]">
                         <div>
-                          <p className="mb-1 text-muted-foreground">
+                          <p className="mb-1 text-muted-foreground text-xs">
                             NO bids (1−ask)
                           </p>
                           {bookData.legB.asks.slice(0, 3).map((a, i) => (
                             <div
                               key={i}
-                              className="flex justify-between tabular-nums"
+                              className="flex justify-between tabular-nums text-xs"
                             >
-                              <span className="text-emerald-600">
+                              <span className="text-emerald-600 font-medium">
                                 {(1 - a.price).toFixed(3)}
                               </span>
                               <span className="text-muted-foreground">
@@ -2022,15 +2331,15 @@ export default function PolymarketRelativeValueTerminal() {
                           ))}
                         </div>
                         <div>
-                          <p className="mb-1 text-muted-foreground">
+                          <p className="mb-1 text-muted-foreground text-xs">
                             NO asks (1−bid)
                           </p>
                           {bookData.legB.bids.slice(0, 3).map((b, i) => (
                             <div
                               key={i}
-                              className="flex justify-between tabular-nums"
+                              className="flex justify-between tabular-nums text-xs"
                             >
-                              <span className="text-red-500">
+                              <span className="text-red-500 font-medium">
                                 {(1 - b.price).toFixed(3)}
                               </span>
                               <span className="text-muted-foreground">
@@ -2049,34 +2358,37 @@ export default function PolymarketRelativeValueTerminal() {
               <div>
                 <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">
-                      P&amp;L vs. repair amount
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      P&amp;L Analysis
                     </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="mt-1 text-sm font-semibold text-slate-950">
+                      Net P&amp;L vs. repair amount
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-0.5">
                       {spreadCalc
                         ? "Live — sized from CLOB top-of-book."
                         : "Illustrative until CLOB book loads."}
                     </p>
                   </div>
                   <div className="flex gap-4 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <span className="inline-block h-0.5 w-3 rounded bg-[#00C805]" />
-                      Net P&amp;L
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="inline-block h-0.5 w-4 rounded-full bg-[#00C805]" />
+                      <span className="font-medium">Net P&amp;L</span>
                     </span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="inline-block h-0.5 w-3 rounded bg-[#FF5000]" />
-                      Break-even
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="inline-block h-0.5 w-4 rounded-full bg-[#FF5000]" />
+                      <span className="font-medium">Break-even</span>
                     </span>
                   </div>
                 </div>
-                <div className="relative h-44 rounded-[28px] border border-slate-200/80 bg-white/84 p-4 shadow-sm">
+                <div className="chart-container relative h-44 rounded-xl border border-slate-200/80 bg-white/50 p-4 shadow-sm backdrop-blur-sm">
                   <canvas ref={pnlChartRef} />
                 </div>
               </div>
 
               {/* ── Summary stats ── */}
               <div>
-                <p className="mb-3 text-sm font-semibold text-slate-950">
+                <p className="mb-4 text-sm font-semibold text-slate-950 uppercase tracking-widest text-muted-foreground">
                   Summary
                 </p>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -2101,7 +2413,7 @@ export default function PolymarketRelativeValueTerminal() {
                     {
                       label: "Break-even repair",
                       value: spreadCalc
-                        ? `${spreadCalc.breakevenRepairPp.toFixed(1)}pp`
+                        ? `${spreadCalc.breakevenRepairPp.toFixed(1)} pts`
                         : "—",
                       tooltip:
                         "The minimum amount the dislocation must close (in percentage points) for you to cover friction costs and not lose money.",
@@ -2109,7 +2421,7 @@ export default function PolymarketRelativeValueTerminal() {
                     {
                       label: "Edge after spread",
                       value: spreadCalc
-                        ? `${spreadCalc.edgePp.toFixed(1)}pp`
+                        ? `${spreadCalc.edgePp.toFixed(1)} pts`
                         : "—",
                       valueCls: spreadCalc
                         ? spreadCalc.edgePp > 0
@@ -2122,16 +2434,16 @@ export default function PolymarketRelativeValueTerminal() {
                   ].map(({ label, value, valueCls, tooltip }) => (
                     <div
                       key={label}
-                      className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm"
+                      className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-white/90 to-slate-50/50 px-5 py-4 shadow-sm"
                     >
-                      <div className="mb-1 flex items-center gap-1.5">
+                      <div className="mb-2 flex items-center gap-1.5">
                         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                           {label}
                         </p>
                         <Tooltip text={tooltip} />
                       </div>
                       <p
-                        className={`text-lg font-semibold tabular-nums tracking-[-0.03em] ${valueCls ?? "text-slate-950"}`}
+                        className={`text-lg font-bold tabular-nums tracking-[-0.03em] ${valueCls ?? "text-slate-950"}`}
                       >
                         {value}
                       </p>
@@ -2142,21 +2454,25 @@ export default function PolymarketRelativeValueTerminal() {
 
               {/* ── Evidence ── */}
               <div>
-                <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="mb-4 flex items-center justify-between gap-2 border-b border-slate-200 pb-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">
-                      Evidence · PIT leave-one-out
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      Evidence Analysis
                     </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
+                    <p className="mt-1 text-sm font-semibold text-slate-950">
+                      PIT leave-one-out backtest
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-0.5">
                       {analyticsData?.backtest
-                        ? "Computed from 30-day daily CLOB history with point-in-time σ triggers."
+                        ? "Computed from 30-day daily CLOB history with point-in-time sigma triggers."
                         : analyticsLoading
                           ? "Loading 30-day history…"
                           : "Select a live family to compute backtest."}
                     </p>
                   </div>
                   {analyticsLoading && (
-                    <span className="text-xs text-muted-foreground animate-pulse">
+                    <span className="text-xs text-muted-foreground">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse mr-1" />
                       Computing…
                     </span>
                   )}
@@ -2170,7 +2486,7 @@ export default function PolymarketRelativeValueTerminal() {
                   const confidence = bt?.confidence ?? null;
                   const confLabel =
                     confidence === "high"
-                      ? "High (≥ 10 episodes)"
+                      ? "High (10+ episodes)"
                       : confidence === "moderate"
                         ? "Moderate (5–9)"
                         : confidence === "low"
@@ -2233,13 +2549,13 @@ export default function PolymarketRelativeValueTerminal() {
                       {cells.map(({ label, value, cls }) => (
                         <div
                           key={label}
-                          className="rounded-[24px] border border-slate-200/80 bg-white/84 px-5 py-4 shadow-sm"
+                          className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-white/90 to-slate-50/50 px-5 py-4 shadow-sm"
                         >
-                          <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                             {label}
                           </p>
                           <p
-                            className={`font-medium ${cls || "text-slate-900"}`}
+                            className={`font-bold text-base ${cls || "text-slate-900"}`}
                           >
                             {value}
                           </p>
@@ -2249,26 +2565,30 @@ export default function PolymarketRelativeValueTerminal() {
                   );
                 })()}
                 {analyticsData?.backtest && (
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    Trigger: σ ≥ 2 (point-in-time). Close: σ ≤ 0.5 or 7-day
-                    timeout. Friction: 2% per round-trip.
+                  <p className="mt-3 text-[11px] text-muted-foreground bg-slate-50 rounded-lg px-3 py-2">
+                    <span className="font-semibold">Trigger:</span> sigma
+                    reaches 2.0 or higher.{" "}
+                    <span className="font-semibold">Close:</span> sigma falls to
+                    0.5 or lower, or the trade hits a 7-day timeout.{" "}
+                    <span className="font-semibold">Friction:</span> 2% per
+                    round-trip.
                   </p>
                 )}
               </div>
 
               {/* ── Model risk ── */}
-              <Alert className="border-amber-200 bg-amber-50">
+              <Alert className="border-amber-200 bg-amber-50/80 rounded-lg">
                 <AlertDescription className="text-sm leading-6 text-amber-800">
                   {analyticsData
-                    ? "σ score and backtest computed from live 30-day CLOB history. Small episode counts mean wide confidence intervals — treat evidence bands as directional, not precise."
+                    ? "Sigma score and backtest are computed from live 30-day CLOB history. Small episode counts mean wide confidence intervals, so treat the evidence bands as directional rather than precise."
                     : spreadCalc
-                      ? "Sizing and friction computed from live CLOB top-of-book. σ and backtest load alongside 30-day history."
-                      : "Friction is a conservative proxy. Book depth and σ load when a live family is selected."}
+                      ? "Sizing and friction are computed from live CLOB top-of-book. Sigma score and backtest load alongside the 30-day history."
+                      : "Friction is a conservative proxy. Book depth and sigma score load when a live family is selected."}
                 </AlertDescription>
               </Alert>
 
               {/* ── Actions ── */}
-              <div className="flex flex-col gap-3 sm:flex-row">
+              <div className="flex flex-col gap-3 sm:flex-row pt-2">
                 <Button
                   size="lg"
                   className="bg-slate-950 px-8 font-semibold text-white hover:bg-slate-800"
