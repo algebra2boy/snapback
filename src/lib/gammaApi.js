@@ -258,17 +258,31 @@ export const SEED_ROWS = [
   },
 ];
 
-// ── Main fetch ────────────────────────────────────────────────────────────────
+// ── Raw event fetch ───────────────────────────────────────────────────────────
 
-export async function fetchFamilies() {
+/**
+ * Fetch raw events from the Gamma API.
+ * @param {object} opts
+ * @param {boolean} opts.active   - Filter to active events only (default true)
+ * @param {boolean} opts.closed   - Include closed events (default false)
+ * @param {number}  opts.limit    - Max events to return (default 1000)
+ * @returns {Promise<Array>} Raw event objects with nested markets[]
+ */
+export async function fetchEvents({ active = true, closed = false, limit = 1000 } = {}) {
+  const params = new URLSearchParams({ active, closed, limit });
   const res = await fetch(
-    `${GAMMA_BASE}/events?active=true&closed=false&limit=1000`,
+    `${GAMMA_BASE}/events?${params}`,
     { signal: AbortSignal.timeout(8_000) }
   );
   if (!res.ok) throw new Error(`Gamma /events returned ${res.status}`);
-
   const raw = await res.json();
-  const events = Array.isArray(raw) ? raw : raw.events ?? [];
+  return Array.isArray(raw) ? raw : raw.events ?? [];
+}
+
+// ── Main fetch ────────────────────────────────────────────────────────────────
+
+export async function fetchFamilies() {
+  const events = await fetchEvents();
 
   const rows = [];
 

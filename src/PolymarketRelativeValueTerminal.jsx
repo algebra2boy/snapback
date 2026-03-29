@@ -21,6 +21,46 @@ const PNL_DATA = REPAIR_PCTS.map((r) => {
   return Math.round((legA + legB - 4.82) * 100) / 100;
 });
 
+// ── Glossary ──────────────────────────────────────────────────────────────────
+const GLOSSARY = [
+  {
+    term: "Family",
+    def: "A group of markets that are logically linked — e.g. all BTC price-threshold markets, or all Fed rate-hold markets by month. Prices within a family must obey mathematical constraints by definition.",
+  },
+  {
+    term: "Dislocation",
+    def: "When prices inside a family violate their constraint — e.g. P(BTC > $100k) > P(BTC > $90k), which is impossible since $100k is harder to reach. The size in % pts is how far outside the constraint the prices sit.",
+  },
+  {
+    term: "% pts (pp)",
+    def: "Percentage points — the raw gap between two prices. A 4 % pt dislocation means the prices are 4 cents apart on a 0–100¢ scale when they should not be.",
+  },
+  {
+    term: "Actionable",
+    def: "Dislocation is ≥ 4 % pts — large enough to likely cover transaction costs and leave positive expected value after the spread closes.",
+  },
+  {
+    term: "Watchlist",
+    def: "Dislocation is 2–4 % pts — notable but may not clear friction costs. Worth monitoring for it to grow before trading.",
+  },
+  {
+    term: "Normal",
+    def: "Dislocation is < 2 % pts — within typical noise. No trade recommended.",
+  },
+  {
+    term: "Strike ladder",
+    def: "Markets with different numeric thresholds on the same underlying (e.g. BTC > $80k, > $90k, > $100k). Higher strikes must be cheaper — if they are not, there is an arb.",
+  },
+  {
+    term: "Expiry curve",
+    def: "Markets with the same outcome but different deadlines (e.g. Fed holds by May / June / July). A nearer deadline resolving YES implies the further one also resolves YES, so the near price must be ≤ the far price.",
+  },
+  {
+    term: "No-arb envelope",
+    def: "The theoretical maximum price each market can have without creating a risk-free arbitrage against its neighbours. Points above this line are the violation.",
+  },
+];
+
 // ── Tooltip ───────────────────────────────────────────────────────────────────
 function Tooltip({ text }) {
   return (
@@ -529,10 +569,10 @@ export default function PolymarketRelativeValueTerminal() {
               Scanner
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Ranked by live raw dislocation from current Gamma event discovery.
+              Groups of linked markets ranked by how far their prices deviate from logical constraints.
             </p>
           </div>
-          <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-202px)]">
+          <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-260px)]">
             {scannerRows.map((row) => (
               <button
                 key={row.family}
@@ -542,23 +582,46 @@ export default function PolymarketRelativeValueTerminal() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium leading-snug text-slate-900">{row.family}</span>
-                  <span className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`}>
-                    {row.severity}
+                  <span className={`text-xs font-bold shrink-0 tabular-nums ${row.severityCls}`} title="Price deviation in percentage points">
+                    {row.severity.replace("pp", " % pts")}
                   </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600">
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600" title={
+                    row.type === "Strike ladder" ? "Markets with different price thresholds on the same asset — higher thresholds must be cheaper" :
+                    row.type === "Expiry curve"  ? "Same outcome, different deadlines — earlier deadlines cannot be more likely than later ones" :
+                                                   "Mutually exclusive outcomes — their probabilities must sum to ~100%"
+                  }>
                     {row.type}
                   </span>
-                  <span className={`rounded-full px-2 py-1 text-[10px] font-medium ${row.status === "Actionable" ? "bg-emerald-100 text-emerald-700" :
-                      row.status === "Watchlist" ? "bg-amber-100 text-amber-700" :
-                        "bg-slate-100 text-slate-500"
-                    }`}>
+                  <span
+                    className={`rounded-full px-2 py-1 text-[10px] font-medium ${row.status === "Actionable" ? "bg-emerald-100 text-emerald-700" :
+                        row.status === "Watchlist" ? "bg-amber-100 text-amber-700" :
+                          "bg-slate-100 text-slate-500"
+                      }`}
+                    title={
+                      row.status === "Actionable" ? "Gap ≥ 4 % pts — likely profitable after costs" :
+                      row.status === "Watchlist"  ? "Gap 2–4 % pts — notable but may not clear transaction costs yet" :
+                                                    "Gap < 2 % pts — within normal noise, no trade"
+                    }
+                  >
                     {row.status}
                   </span>
                 </div>
               </button>
             ))}
+          </div>
+          {/* ── Glossary ── */}
+          <div className="border-t border-border/80 px-5 py-4">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Glossary</p>
+            <dl className="space-y-2">
+              {GLOSSARY.map(({ term, def }) => (
+                <div key={term}>
+                  <dt className="text-[11px] font-semibold text-slate-700">{term}</dt>
+                  <dd className="text-[11px] leading-relaxed text-muted-foreground">{def}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
         </aside>
 
@@ -573,7 +636,7 @@ export default function PolymarketRelativeValueTerminal() {
               <div className="mb-6 flex flex-col items-start justify-between gap-6 lg:flex-row">
                 <div className="max-w-2xl">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Selected family
+                    Selected market group
                   </p>
                   <h2 className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.04em] text-slate-950">
                     {heroFamily?.family ?? "—"}
@@ -589,11 +652,12 @@ export default function PolymarketRelativeValueTerminal() {
                   )}
                 </div>
                 <div className="min-w-[140px] rounded-3xl border border-slate-200/80 bg-white/85 px-5 py-4 text-left shadow-sm lg:text-right">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Current signal</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Price deviation</p>
                   <p className={`mt-2 text-4xl font-bold tracking-[-0.06em] tabular-nums ${heroFamily?.severityCls ?? ""}`}>
-                    {heroFamily?.severity ?? "—"}
+                    {heroFamily ? heroFamily.severity.replace("pp", "") : "—"}
                   </p>
-                  <p className="mt-1 text-sm text-muted-foreground">{heroFamily?.status ?? "—"}</p>
+                  <p className="text-xs text-muted-foreground">percentage points</p>
+                  <p className="mt-1 text-sm font-medium">{heroFamily?.status ?? "—"}</p>
                 </div>
               </div>
 
@@ -653,16 +717,28 @@ export default function PolymarketRelativeValueTerminal() {
             <StatCell
               label="Markets in family"
               value={heroFamily ? String(heroFamily.markets.length) : "—"}
+              tooltip="How many individual markets belong to this linked group."
               border
             />
-            <StatCell label="Family type" value={heroFamily?.type ?? "—"} border />
             <StatCell
-              label="Raw dislocation"
-              value={heroFamily ? `${(heroFamily.rawDislocation * 100).toFixed(1)}pp` : "—"}
-              valueCls={heroFamily?.severityCls}
+              label="Family type"
+              value={heroFamily?.type ?? "—"}
+              tooltip="The structural constraint that links these markets. Strike ladder = price thresholds. Expiry curve = same outcome, different deadlines. Mutex set = mutually exclusive outcomes."
               border
             />
-            <StatCell label="Status" value={heroFamily?.status ?? "—"} border={false} />
+            <StatCell
+              label="Price deviation"
+              value={heroFamily ? `${(heroFamily.rawDislocation * 100).toFixed(1)} % pts` : "—"}
+              valueCls={heroFamily?.severityCls}
+              tooltip="How far the most-violated pair sits outside the no-arbitrage constraint, in percentage points (cents on a 0–100¢ scale)."
+              border
+            />
+            <StatCell
+              label="Signal strength"
+              value={heroFamily?.status ?? "—"}
+              tooltip="Actionable = gap ≥ 4 % pts, likely profitable after costs. Watchlist = 2–4 % pts, monitor for growth. Normal = < 2 % pts, within noise."
+              border={false}
+            />
           </div>
 
           {/* ── Spread builder ── */}
