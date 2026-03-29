@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import Chart from "chart.js/auto";
 import { Info, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -370,9 +371,7 @@ function ReplayModal({ open, onClose, spreadSeries, heroFamily }) {
                               <td className="px-4 py-2.5 tabular-nums text-slate-700">
                                 {ep.durationDays.toFixed(1)}d
                                 {ep.timedOut && (
-                                  <span className="ml-1 text-amber-500">
-                                    ⏱
-                                  </span>
+                                  <span className="ml-1 text-amber-500">⏱</span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 tabular-nums text-slate-700">
@@ -512,9 +511,7 @@ function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
                     Leg A · Buy {isMutex ? "NO" : "YES"}
                   </p>
                   <p className="mb-3 text-xs font-medium leading-snug text-slate-900">
-                    {legAMarket
-                      ? getQuestion(legAMarket).slice(0, 60)
-                      : "—"}
+                    {legAMarket ? getQuestion(legAMarket).slice(0, 60) : "—"}
                   </p>
                   {[
                     ["Price", `$${spreadCalc.priceA.toFixed(3)}`],
@@ -540,9 +537,7 @@ function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
                     Leg B · Buy NO
                   </p>
                   <p className="mb-3 text-xs font-medium leading-snug text-slate-900">
-                    {legBMarket
-                      ? getQuestion(legBMarket).slice(0, 60)
-                      : "—"}
+                    {legBMarket ? getQuestion(legBMarket).slice(0, 60) : "—"}
                   </p>
                   {[
                     ["Price", `$${spreadCalc.priceB.toFixed(3)}`],
@@ -593,7 +588,9 @@ function SpreadOrderModal({ open, onClose, heroFamily, spreadCalc }) {
                   ].map(([label, val, cls]) => (
                     <div key={label} className="flex justify-between text-sm">
                       <span className="text-muted-foreground">{label}</span>
-                      <span className={`font-medium ${cls || "text-slate-900"}`}>
+                      <span
+                        className={`font-medium ${cls || "text-slate-900"}`}
+                      >
                         {val}
                       </span>
                     </div>
@@ -677,7 +674,9 @@ function GlossaryModal({ open, onClose }) {
           {GLOSSARY.map(({ term, def }) => (
             <div key={term}>
               <p className="text-xs font-semibold text-slate-900">{term}</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{def}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {def}
+              </p>
             </div>
           ))}
         </div>
@@ -736,6 +735,7 @@ function buildViolationAlert(family) {
 
 // ── Main terminal ─────────────────────────────────────────────────────────────
 export default function PolymarketRelativeValueTerminal() {
+  const { user, logout } = useAuth0();
   const strikeChartRef = useRef(null);
   const pnlChartRef = useRef(null);
   const historyChartRef = useRef(null);
@@ -1357,7 +1357,10 @@ export default function PolymarketRelativeValueTerminal() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <GlossaryModal open={glossaryOpen} onClose={() => setGlossaryOpen(false)} />
+      <GlossaryModal
+        open={glossaryOpen}
+        onClose={() => setGlossaryOpen(false)}
+      />
       <SpreadOrderModal
         open={orderModalOpen}
         onClose={() => setOrderModalOpen(false)}
@@ -1430,6 +1433,34 @@ export default function PolymarketRelativeValueTerminal() {
                 Fetching…
               </span>
             )}
+            {/* ── User avatar + logout ── */}
+            <div className="flex items-center gap-2 border-l border-border/60 pl-3">
+              {user?.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name ?? "User avatar"}
+                  className="h-7 w-7 rounded-full ring-1 ring-slate-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-600">
+                  {user?.name?.[0]?.toUpperCase() ?? "U"}
+                </div>
+              )}
+              <div className="hidden flex-col md:flex">
+                <span className="text-[11px] font-medium leading-tight text-slate-700 max-w-[120px] truncate">
+                  {user?.name ?? user?.email ?? "Signed in"}
+                </span>
+              </div>
+              <button
+                onClick={() =>
+                  logout({ logoutParams: { returnTo: window.location.origin } })
+                }
+                className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+                title="Sign out"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
         </div>
       </header>
