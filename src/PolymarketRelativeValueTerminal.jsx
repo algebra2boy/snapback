@@ -1535,7 +1535,7 @@ export default function PolymarketRelativeValueTerminal() {
                 <span className="font-medium">
                   {loading ? "—" : scannerRows.length}
                 </span>
-              </div>
+              </span>
               <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2">
                 <span className="text-xs font-medium text-muted-foreground">
                   Dislocations
