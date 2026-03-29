@@ -1,7 +1,9 @@
 // Polymarket CLOB API integration
 // Docs: https://docs.polymarket.com/#prices-history
 
-const CLOB_BASE = "/api/clob";
+const CLOB_BASE = import.meta.env.PROD
+  ? "https://clob.polymarket.com"
+  : "/api/clob";
 
 /**
  * Fetch the order book for a single CLOB token (YES token ID).
